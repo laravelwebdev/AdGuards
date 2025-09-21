@@ -25,7 +25,7 @@
                 "https://www.geoguessr.com/*"
             ],
             "js": [
-                "ads.js"
+                "popup-block.js"
             ],
             "all_frames": true,
             "run_at": "document_end"
@@ -36,7 +36,7 @@
                 "https://www.worldguessr.com/*"
             ],
             "js": [
-                "pop-ups.js"
+                "ads-block.js"
             ],
             "all_frames": true,
             "run_at": "document_end"
