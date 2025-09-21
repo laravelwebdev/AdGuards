@@ -25,7 +25,7 @@
                 "https://www.geoguessr.com/*"
             ],
             "js": [
-                "popup-block.js"
+                "popups-block.js"
             ],
             "all_frames": true,
             "run_at": "document_end"
