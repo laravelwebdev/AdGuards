@@ -259,10 +259,10 @@ async function showMapPopup(lat = 0, lng = 0) {
     }
 
     const pinElement = document.createElement("div");
-    pinElement.style.width = "2px";
-    pinElement.style.height = "2px";
+    pinElement.style.width = "3px";
+    pinElement.style.height = "3px";
     pinElement.style.borderRadius = "50%";
-    pinElement.opacity = "0.5";
+    pinElement.opacity = "0.6";
     pinElement.style.background = "green";
 
     currentMarker = new google.maps.marker.AdvancedMarkerElement({
