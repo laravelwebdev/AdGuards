@@ -51,16 +51,27 @@ XMLHttpRequest.prototype.open = function (method, url) {
                     : globalPlace.country
             );
 
-            // 🚀 Tambahkan hash ke address bar hanya jika hint ada isinya
-            if (hint && hint.trim() !== "") {
+            if (hint && isHintChanged(hint)) {
                 location.hash = hint;
             }
-
-            saveCoordinates();
-        });
-    }
+                saveCoordinates();
+            });
+        }
     return originalOpen.apply(this, arguments);
 };
+
+function isHintChanged(newHint) {
+    if (!newHint) return false;
+
+    // buang '#' dari location.hash
+    const current = location.hash ? location.hash.substring(1) : "";
+
+    // ambil substring mulai dari index 1 (karakter kedua)
+    const newCore = newHint.substring(1);
+    const currentCore = current.substring(1);
+
+    return newCore !== currentCore;
+}
 
 // =================== Map Helpers ===================
 function isGoogleMap(obj) {
@@ -281,7 +292,7 @@ function shiftAfterComma(input = "") {
   const charCode = 97 + Math.floor(Math.random() * 26);
   const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
 
-  // Transformasi: huruf mundur (a → z, b → a, ...)
+
   const result = text.split("").map(ch => {
     if (ch === " ") return "-"; // spasi jadi strip
 
