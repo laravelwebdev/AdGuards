@@ -42,16 +42,18 @@ XMLHttpRequest.prototype.open = function (method, url) {
             const countryMatch = interceptedResult.match(countryPattern)?.[0];
             if (countryMatch) {
                 globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
+            } else {
+                globalPlace.country = "";
             }
 
-            globalPlace.state = interceptedResult.match(statePattern)?.[1]?.trim() || null;
+            globalPlace.state = interceptedResult.match(statePattern)?.[1]?.trim() || "";
             hint = shiftAfterComma(
                 (globalPlace.country.toUpperCase() === 'INDONESIA')
                     ? globalPlace.state
                     : globalPlace.country
             );
 
-            if (hint && isHintChanged(hint)) {
+            if (isHintChanged(hint)) {
                 location.hash = hint;
             }
                 saveCoordinates();
@@ -61,14 +63,18 @@ XMLHttpRequest.prototype.open = function (method, url) {
 };
 
 function isHintChanged(newHint) {
-    if (!newHint) return false;
+    // hint baru tidak ada → tidak berubah
+    if (!newHint || newHint.trim() === "" || newHint.length < 2) return false;
 
-    // buang '#' dari location.hash
+    // ambil hash sekarang tanpa '#'
     const current = location.hash ? location.hash.substring(1) : "";
 
-    // ambil substring mulai dari index 1 (karakter kedua)
-    const newCore = newHint.substring(1);
-    const currentCore = current.substring(1);
+    // kalau hash belum ada → pasti berubah
+    if (!current || current.length < 2) return true;
+
+    // bandingkan mulai karakter kedua (case-insensitive biar aman)
+    const newCore = newHint.substring(1).toLowerCase();
+    const currentCore = current.substring(1).toLowerCase();
 
     return newCore !== currentCore;
 }
