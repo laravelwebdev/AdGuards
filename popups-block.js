@@ -25,8 +25,8 @@ XMLHttpRequest.prototype.open = function (method, url) {
         (url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/GetMetadata") ||
             url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"))
     ) {
-        hint = "";
         this.addEventListener("load", function () {
+            hint = "";
             let interceptedResult = this.responseText;
             const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
             const countryPattern = /"[A-Z]{2}"/g;
@@ -87,7 +87,6 @@ function scan(observer) {
             observer.disconnect();
             attachWheelHandler();
             attachMouseHandlers();
-            attachKeyHandler();
             break;
         }
     }
@@ -298,9 +297,6 @@ function shiftAfterComma(input = "") {
 
   return marker + result;
 }
-
-// =================== Keybind ===================
-function attachKeyHandler() {
     document.addEventListener("keydown", (e) => {
         const links = Array.from(document.querySelectorAll("a"))
             .filter(a => a.textContent.trim().includes("Terms") || a.textContent.trim().includes("Map Terms"));
@@ -315,7 +311,6 @@ function attachKeyHandler() {
             links.forEach(link => link.textContent = "Terms");
         }
     });
-}
 
 // =================== Map Div Checker ===================
 setInterval(attachMapCursorHandler, 1000);
