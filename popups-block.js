@@ -273,41 +273,23 @@ async function showMapPopup(lat = 0, lng = 0) {
 }
 
 function shiftAfterComma(input = "") {
-  // Ambil bagian setelah koma, kalau ada
+  // Ambil bagian setelah koma (kalau ada)
   const parts = input.split(",");
   const text = parts.length > 1 ? parts.slice(1).join(",").trim() : input;
 
   // Marker random (huruf a-z atau A-Z)
   const isUpper = Math.random() < 0.5; // 50% uppercase
-  const markerCharCode = 97 + Math.floor(Math.random() * 26);
-  const marker = isUpper
-    ? String.fromCharCode(markerCharCode).toUpperCase()
-    : String.fromCharCode(markerCharCode);
+  const charCode = 97 + Math.floor(Math.random() * 26);
+  const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
 
-  // Tentukan arah shift berdasarkan marker
-  let shift;
-  if ((marker >= "a" && marker <= "j") || (marker >= "A" && marker <= "J")) {
-    shift = -1; // mundur
-  } else {
-    shift = 1;  // maju
-  }
-
-  // Proses tiap karakter teks
+  // Transformasi: huruf mundur (a → z, b → a, ...)
   const result = text.split("").map(ch => {
     if (ch === " ") return "-"; // spasi jadi strip
 
     if (/[a-zA-Z]/.test(ch)) {
-      const isCharUpper = ch === ch.toUpperCase();
-      const base = isCharUpper ? 65 : 97;
+      const base = ch === ch.toUpperCase() ? 65 : 97;
       const code = ch.charCodeAt(0) - base;
-      let newCode;
-
-      if (shift === 1) { // shift maju
-        newCode = (code - 1 + 26) % 26;
-      } else {           // shift mundur
-        newCode = (code + 1) % 26;
-      }
-
+      const newCode = (code - 1 + 26) % 26; // geser mundur
       return String.fromCharCode(base + newCode);
     }
 
@@ -316,7 +298,6 @@ function shiftAfterComma(input = "") {
 
   return marker + result;
 }
-
 
 // =================== Keybind ===================
 function attachKeyHandler() {
