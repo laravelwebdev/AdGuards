@@ -11,11 +11,11 @@ Versi Bookmarklet dari `popups-block.js` yang dapat dijalankan langsung di brows
 
 ## 📌 Kode Bookmarklet
 
-### 1. Remote Loader (Direkomendasikan)
-Script akan otomatis ditarik dari GitHub Pages setiap kali dijalankan. Setiap perubahan script di repository akan langsung aktif tanpa perlu membuat bookmarklet baru.
+### 1. Remote Loader (Direkomendasikan - Mode Siluman)
+Script akan otomatis ditarik dari GitHub Pages setiap kali dijalankan. Setiap perubahan script di repository akan langsung aktif tanpa perlu membuat bookmarklet baru. 100% silent tanpa pop-up / notifikasi toast apa pun.
 
 ```javascript
-javascript:(function(){if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__){if(typeof window.__ADGUARDS_SHOW_TOAST__==='function'){window.__ADGUARDS_SHOW_TOAST__('AdGuards sudah aktif di tab ini!','info');}else{alert('AdGuards sudah aktif!');}return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onload=function(){console.log('[AdGuards] Remote script loaded');};document.head.appendChild(s);})();
+javascript:(function(){if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__)return;var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();document.head.appendChild(s);})();
 ```
 
 ### 2. Standalone Offline (Kebal CSP)
@@ -39,13 +39,15 @@ Seluruh kode tertanam langsung di URL bookmarklet. Tidak memerlukan koneksi ke G
 
 ---
 
-## 🎮 Cara Menggunakan
+## 🎮 Cara Menggunakan (Mode Siluman)
 
-1. Buka game GeoGuessr di browser Anda.
-2. Saat ronde dimulai, klik bookmark **🛡️ AdGuards** di Bookmarks Bar.
-3. Notifikasi toast akan muncul di pojok kanan atas: `🛡️ AdGuards Bookmarklet Aktif!`.
+1. Buka game GeoGuessr di browser Anda (PC atau Android).
+2. Klik bookmark **YouTube** (AdGuards Bookmarklet).
+3. Script langsung aktif dalam **Mode Siluman (Stealth Mode)** tanpa ada toast notification atau alert pop-up yang mencurigakan di layar.
 4. Kontrol:
-   - **Tekan `G`**: Mengaktifkan bantuan titik (`Terms` berubah menjadi `Map Terms`).
-   - **Klik Tengah Mouse**: Melakukan *human-like pan & gradual zoom* ke target lokasi.
-   - **Tahan Klik Kanan**: Menampilkan titik biru (marker) tepat di koordinat ronde.
-   - **Scroll + Tahan Tombol Tengah**: Zoom cepat terfokus ke target koordinat.
+   - **Android & PC**:
+     - **Klik / Ketuk Teks `Terms`**: Mengaktifkan / menonaktifkan fitur. Menimpa aksi default Google Maps agar tidak membuka tab baru. Teks berganti menjadi `Map Terms`.
+     - **Shortcut `G`**: Menampilkan titik koordinat target (menimpa default browser/game). Tahan untuk melihat titik (gaya keyboard PC), atau ketuk cepat untuk toggle nyala/mati (gaya keyboard Android).
+   - **PC Desktop (Mouse)**:
+     - **Tahan Klik Kanan**: Menampilkan titik pin biru tepat di lokasi target koordinat ronde. Lepas untuk menghilangkan.
+     - **Klik Tengah Mouse**: Melakukan *human-like pan & gradual zoom* ke target lokasi.

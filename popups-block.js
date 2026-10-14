@@ -448,13 +448,15 @@ function handleContextMenu(e) {
 
 // =================== Marker Management (Thread-Safe & High Contrast) ===================
 let isRightMouseDown = false;
+let isKeyMarkerActive = false;
+let keyPressStartTime = 0;
 
 function showMarkerAt(lat, lng) {
     if (!isMapValid(foundMap) || !lat || !lng) return;
 
     clearMarker();
 
-    if (!isRightMouseDown) return;
+    if (!isRightMouseDown && !isKeyMarkerActive) return;
 
     // 1. Prioritaskan google.maps.Marker bawaan (instan 0ms, 100% kompatibel di raster map GeoGuessr tanpa butuh mapId)
     try {
@@ -516,6 +518,7 @@ function clearMarker() {
         } catch (_) {}
         currentMarker = null;
     }
+    isKeyMarkerActive = false;
 }
 
 function shiftAfterComma(input = "") {
@@ -544,20 +547,91 @@ function shiftAfterComma(input = "") {
 
   return marker + result;
 }
-    document.addEventListener("keydown", (e) => {
-        const links = Array.from(document.querySelectorAll("a"))
-            .filter(a => a.textContent.trim().includes("Terms") || a.textContent.trim().includes("Map Terms"));
+// =================== Terms Interceptor (Aktivasi / Deaktivasi) ===================
+function isTermsElement(target) {
+    if (!target) return false;
+    const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
+    if (!a) return false;
+    const text = (a.textContent || "").trim();
+    const href = (a.getAttribute("href") || "").toLowerCase();
+    return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
+}
 
-        const key = e.key.toLowerCase();
-
-        if (key === "g") {
-            dotAdded = true;
-            links.forEach(link => link.textContent = "Map Terms");
-        } else if (key !== " ") {
-            dotAdded = false;
-            links.forEach(link => link.textContent = "Terms");
+function syncTermsText() {
+    const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+    links.forEach(link => {
+        const desired = dotAdded ? "Map Terms" : "Terms";
+        if (link.textContent !== desired) {
+            link.textContent = desired;
         }
     });
+}
+
+function handleTermsTrigger(e) {
+    if (isTermsElement(e.target)) {
+        // Hilangkan action behavior bawaan Google Maps (tidak membuka tab baru)
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        // Toggle aktivasi / deaktivasi fitur
+        dotAdded = !dotAdded;
+        syncTermsText();
+
+        // Jika dimatikan, bersihkan marker jika sedang muncul
+        if (!dotAdded) {
+            isRightMouseDown = false;
+            isKeyMarkerActive = false;
+            clearMarker();
+        }
+    }
+}
+
+document.addEventListener("click", handleTermsTrigger, true);
+document.addEventListener("touchend", handleTermsTrigger, true);
+
+// =================== Keyboard Shortcut (Lihat Titik Koordinat) ===================
+// Menimpa action bawaan tombol [G] / shortcut agar tidak memicu aksi browser/game
+document.addEventListener("keydown", (e) => {
+    const key = e.key ? e.key.toLowerCase() : "";
+    if (key === "g") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        if (!dotAdded || !isMapValid(foundMap)) return;
+        if (e.repeat) return;
+
+        if (currentMarker && !isRightMouseDown) {
+            isKeyMarkerActive = false;
+            clearMarker();
+            return;
+        }
+
+        keyPressStartTime = Date.now();
+        isKeyMarkerActive = true;
+        if (globalCoordinates.lat && globalCoordinates.lng) {
+            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+        }
+    }
+}, true);
+
+document.addEventListener("keyup", (e) => {
+    const key = e.key ? e.key.toLowerCase() : "";
+    if (key === "g") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        if (!dotAdded) return;
+
+        const holdDuration = Date.now() - keyPressStartTime;
+        if (holdDuration >= 250) {
+            isKeyMarkerActive = false;
+            clearMarker();
+        }
+    }
+}, true);
 
 // =================== Party Modal Auto-Dismiss ===================
 function dismissPartyModalIfNeeded() {
@@ -582,5 +656,6 @@ setInterval(() => {
     if (!isMapValid(foundMap)) {
         scanForMap();
     }
+    syncTermsText();
     dismissPartyModalIfNeeded();
 }, 1000);

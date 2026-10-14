@@ -9,64 +9,15 @@
 (function () {
     "use strict";
 
-    // Mencegah script dijalankan dobel jika bookmarklet diklik lebih dari sekali
+    // Mencegah script dijalankan dobel jika bookmarklet diklik lebih dari sekali (Mode Siluman - Silent)
     if (window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__) {
-        showAdGuardsToast("AdGuards sudah aktif di halaman ini! Siap digunakan.", "info");
         return;
     }
     window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__ = true;
 
-    // =================== Notification Toast ===================
-    function showAdGuardsToast(message, type = "success") {
-        try {
-            const toastId = "__adguards_notification_toast__";
-            let toast = document.getElementById(toastId);
-            if (!toast) {
-                toast = document.createElement("div");
-                toast.id = toastId;
-                toast.style.cssText = [
-                    "position: fixed",
-                    "top: 20px",
-                    "right: 20px",
-                    "z-index: 2147483647",
-                    "background: rgba(15, 23, 42, 0.92)",
-                    "color: #f8fafc",
-                    "padding: 12px 18px",
-                    "border-radius: 12px",
-                    "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-                    "font-size: 13px",
-                    "font-weight: 500",
-                    "box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.15)",
-                    "backdrop-filter: blur(8px)",
-                    "-webkit-backdrop-filter: blur(8px)",
-                    "display: flex",
-                    "align-items: center",
-                    "gap: 10px",
-                    "transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-                    "transform: translateY(-20px)",
-                    "opacity: 0",
-                    "pointer-events: none"
-                ].join(";");
-                document.body.appendChild(toast);
-            }
-
-            const icon = type === "warning" ? "⚠️" : (type === "info" ? "ℹ️" : "🛡️");
-            toast.innerHTML = `<span style="font-size: 16px;">${icon}</span> <span>${message}</span>`;
-            
-            requestAnimationFrame(() => {
-                toast.style.transform = "translateY(0)";
-                toast.style.opacity = "1";
-            });
-
-            clearTimeout(window.__adguardsToastTimer);
-            window.__adguardsToastTimer = setTimeout(() => {
-                toast.style.transform = "translateY(-20px)";
-                toast.style.opacity = "0";
-            }, 3500);
-        } catch (e) {
-            console.log("[AdGuards]", message);
-        }
-    }
+    // =================== Notification Toast (Mode Siluman) ===================
+    // Dikosongkan agar murni Mode Siluman tanpa ada notifikasi/toast apa pun di layar
+    function showAdGuardsToast() {}
     window.__ADGUARDS_SHOW_TOAST__ = showAdGuardsToast;
 
     // =================== Global Variables ===================
@@ -502,11 +453,14 @@
     }
 
     // =================== Marker Management ===================
+    let isKeyMarkerActive = false;
+    let keyPressStartTime = 0;
+
     function showMarkerAt(lat, lng) {
         if (!isMapValid(foundMap) || !lat || !lng) return;
 
         clearMarker();
-        if (!isRightMouseDown) return;
+        if (!isRightMouseDown && !isKeyMarkerActive) return;
 
         // Prioritas google.maps.Marker bawaan
         try {
@@ -568,6 +522,7 @@
             } catch (_) {}
             currentMarker = null;
         }
+        isKeyMarkerActive = false;
     }
 
     function shiftAfterComma(input = "") {
@@ -592,21 +547,96 @@
         return marker + result;
     }
 
-    // Keyboard listener untuk mengaktifkan titik ('g') dan mematikan ('selain spasi')
-    document.addEventListener("keydown", (e) => {
-        const links = Array.from(document.querySelectorAll("a"))
-            .filter(a => a.textContent.trim().includes("Terms") || a.textContent.trim().includes("Map Terms"));
+    // =================== Terms Interceptor (Aktivasi / Deaktivasi) ===================
+    function isTermsElement(target) {
+        if (!target) return false;
+        const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
+        if (!a) return false;
+        const text = (a.textContent || "").trim();
+        const href = (a.getAttribute("href") || "").toLowerCase();
+        return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
+    }
 
-        const key = e.key.toLowerCase();
+    function syncTermsText() {
+        const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+        links.forEach(link => {
+            const desired = dotAdded ? "Map Terms" : "Terms";
+            if (link.textContent !== desired) {
+                link.textContent = desired;
+            }
+        });
+    }
 
-        if (key === "g") {
-            dotAdded = true;
-            links.forEach(link => link.textContent = "Map Terms");
-        } else if (key !== " ") {
-            dotAdded = false;
-            links.forEach(link => link.textContent = "Terms");
+    function handleTermsTrigger(e) {
+        if (isTermsElement(e.target)) {
+            // Hilangkan action behavior bawaan Google Maps (tidak membuka tab/halaman baru Terms)
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            // Toggle aktivasi / deaktivasi fitur
+            dotAdded = !dotAdded;
+            syncTermsText();
+
+            // Jika dimatikan, bersihkan marker jika sedang muncul
+            if (!dotAdded) {
+                isRightMouseDown = false;
+                isKeyMarkerActive = false;
+                clearMarker();
+            }
         }
-    });
+    }
+
+    // Capture click & touchend agar mendahului listener default halaman Google
+    document.addEventListener("click", handleTermsTrigger, true);
+    document.addEventListener("touchend", handleTermsTrigger, true);
+
+    // =================== Keyboard Shortcut (Lihat Titik Koordinat) ===================
+    // Menimpa action bawaan tombol [G] / shortcut agar tidak memicu aksi browser/game
+    document.addEventListener("keydown", (e) => {
+        const key = e.key ? e.key.toLowerCase() : "";
+        if (key === "g") {
+            // Hilangkan behavior default tombol 'g' di browser atau game
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            if (!dotAdded || !isMapValid(foundMap)) return;
+            if (e.repeat) return; // Mencegah flicker saat tombol ditahan terus
+
+            // Jika titik saat ini sedang tampil (hasil tap cepat di Android sebelumnya), tekan lagi untuk sembunyikan
+            if (currentMarker && !isRightMouseDown) {
+                isKeyMarkerActive = false;
+                clearMarker();
+                return;
+            }
+
+            keyPressStartTime = Date.now();
+            isKeyMarkerActive = true;
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+            }
+        }
+    }, true);
+
+    document.addEventListener("keyup", (e) => {
+        const key = e.key ? e.key.toLowerCase() : "";
+        if (key === "g") {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            if (!dotAdded) return;
+
+            const holdDuration = Date.now() - keyPressStartTime;
+            // Jika tombol ditahan lama (> 250ms, gaya desktop keyboard): saat dilepas langsung sembunyikan
+            if (holdDuration >= 250) {
+                isKeyMarkerActive = false;
+                clearMarker();
+            }
+            // Jika ditekan singkat (< 250ms, gaya virtual keyboard Android): titik tetap terbuka hingga ditekan lagi
+        }
+    }, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
@@ -631,10 +661,7 @@
         if (!isMapValid(foundMap)) {
             scanForMap();
         }
+        syncTermsText();
         dismissPartyModalIfNeeded();
     }, 1000);
-
-    // Tampilkan notifikasi keberhasilan pemuatan bookmarklet
-    showAdGuardsToast("AdGuards Bookmarklet Aktif! Tekan [G] untuk mengaktifkan fitur.", "success");
-    console.log("🛡️ [AdGuards] Popups & Geo Tracker Bookmarklet loaded successfully.");
 })();
