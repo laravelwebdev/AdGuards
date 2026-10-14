@@ -467,11 +467,11 @@ function showMarkerAt(lat, lng) {
                 optimized: false,
                 icon: {
                     path: google.maps.SymbolPath.CIRCLE,
-                    scale: 7, // Diameter 14px - sangat jelas & tajam
-                    fillColor: "#ff0038", // Merah neon menyala, sangat kontras di semua permukaan peta
+                    scale: 2, // Diameter 4px (ukuran kecil original, tidak mencolok)
+                    fillColor: "#0088ff", // Biru elektrik yang jelas namun tidak berlebihan
                     fillOpacity: 1.0,
-                    strokeColor: "#ffffff", // Outline putih tebal agar terlihat jelas di background gelap maupun terang
-                    strokeWeight: 2.5,
+                    strokeColor: "#ffffff", // Outline putih tipis 1px agar kontras
+                    strokeWeight: 1,
                 }
             });
             return;
@@ -484,12 +484,12 @@ function showMarkerAt(lat, lng) {
     try {
         if (google.maps.marker?.AdvancedMarkerElement) {
             const pinElement = document.createElement("div");
-            pinElement.style.width = "14px";
-            pinElement.style.height = "14px";
+            pinElement.style.width = "4px";
+            pinElement.style.height = "4px";
             pinElement.style.borderRadius = "50%";
-            pinElement.style.background = "#ff0038";
-            pinElement.style.border = "2.5px solid #ffffff";
-            pinElement.style.boxShadow = "0 0 6px rgba(0,0,0,0.7), 0 0 10px #ff0038";
+            pinElement.style.background = "#0088ff";
+            pinElement.style.border = "1px solid #ffffff";
+            pinElement.style.boxShadow = "0 0 3px #0088ff";
             pinElement.style.transform = "translate(-50%, -50%)";
             pinElement.style.pointerEvents = "none";
             pinElement.style.zIndex = "9999999";
