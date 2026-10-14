@@ -1,13 +1,11 @@
 // =================== Global Variables ===================
 let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
 let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "" };
+let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
+let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
+let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
 let foundMap = null;
-let mapDiv = null; // simpan div map
-let isPanning = false; // flag untuk smooth panning
-let isZooming = false; // flag untuk zoom manusiawi
-const defaultTooltipText = "";
-let overlay = null;
-let hint ="";
+let hint = "";
 let dotAdded = false;
 let currentMarker = null;
 
@@ -15,6 +13,50 @@ let currentMarker = null;
 function saveCoordinates() {
     localStorage.setItem("globalCoordinates", JSON.stringify(globalCoordinates));
     localStorage.setItem("globalPlace", JSON.stringify(globalPlace));
+}
+
+// =================== Distance & Game Tracking Helpers ===================
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371e3; // radius bumi dalam meter
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+function isAlreadyPlayed(lat, lng) {
+    return playedRounds.some(round => getDistanceMeters(round.lat, round.lng, lat, lng) < 500);
+}
+
+function getGameIdFromUrl() {
+    const match = location.pathname.match(/\/(game|challenge|duels|live-challenge|party)\/([a-zA-Z0-9_-]+)/);
+    return match ? match[2] : location.pathname;
+}
+
+function checkGameReset() {
+    const gameId = getGameIdFromUrl();
+    if (gameId && currentGameId && gameId !== currentGameId) {
+        playedRounds = [];
+        currentRoundCoords = null;
+    }
+    currentGameId = gameId;
+}
+
+function updateHashSilently(newHint) {
+    if (!newHint) return;
+    try {
+        const newUrl = location.pathname + location.search + "#" + newHint;
+        if (window.history && typeof History.prototype.replaceState === "function") {
+            History.prototype.replaceState.call(window.history, window.history.state, "", newUrl);
+        } else {
+            window.history.replaceState(window.history.state, "", newUrl);
+        }
+    } catch (e) {
+        location.hash = newHint;
+    }
 }
 
 // =================== Intercept Google Maps ===================
@@ -26,15 +68,48 @@ XMLHttpRequest.prototype.open = function (method, url) {
             url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"))
     ) {
         this.addEventListener("load", function () {
-            hint = "";
             let interceptedResult = this.responseText;
             const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
             const countryPattern = /"[A-Z]{2}"/g;
             const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
 
             const match = interceptedResult.match(pattern)?.[0];
-            if (match) {
-                const [lat, lng] = match.split(",").map(Number);
+            if (!match) return;
+
+            const [lat, lng] = match.split(",").map(Number);
+            if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+
+            checkGameReset();
+
+            // 1. Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya.
+            // Saat ronde berakhir dan layar result/summary muncul, GeoGuessr sering memuat ulang Street View / metadata
+            // untuk ronde yang baru saja selesai. Ini akan dicegah agar tidak menimpa ronde berikutnya yang sudah di-prefetch.
+            if (isAlreadyPlayed(lat, lng)) {
+                return;
+            }
+
+            // 2. Deteksi transisi ronde (jarak > 500m dari ronde aktif saat ini menandakan ronde baru)
+            let isNewRound = false;
+            if (currentRoundCoords) {
+                const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
+                if (distFromCurrent > 500) {
+                    // Ronde sebelumnya selesai dan sekarang berpindah ke ronde berikutnya (misal prefetch)
+                    if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
+                        playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
+                        if (playedRounds.length > 5) {
+                            playedRounds.shift();
+                        }
+                    }
+                    currentRoundCoords = { lat, lng };
+                    isNewRound = true;
+                }
+            } else {
+                currentRoundCoords = { lat, lng };
+                isNewRound = true;
+            }
+
+            // Simpan koordinat ronde jika ini ronde baru
+            if (isNewRound) {
                 globalCoordinates.lat = lat;
                 globalCoordinates.lng = lng;
             }
@@ -42,23 +117,30 @@ XMLHttpRequest.prototype.open = function (method, url) {
             const countryMatch = interceptedResult.match(countryPattern)?.[0];
             if (countryMatch) {
                 globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
-            } else {
+            } else if (isNewRound) {
                 globalPlace.country = "";
             }
 
-            globalPlace.state = interceptedResult.match(statePattern)?.[1]?.trim() || "";
-            hint = shiftAfterComma(
-                (globalPlace.country.toUpperCase() === 'INDONESIA')
-                    ? globalPlace.state
-                    : globalPlace.country
-            );
-
-            if (isHintChanged(hint)) {
-                location.hash = hint;
+            const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
+            if (stateMatch) {
+                globalPlace.state = stateMatch;
+            } else if (isNewRound) {
+                globalPlace.state = "";
             }
-                saveCoordinates();
-            });
-        }
+
+            const country = globalPlace.country || "";
+            const state = globalPlace.state || "";
+            const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
+
+            if (targetPlace) {
+                hint = shiftAfterComma(targetPlace);
+                if (isHintChanged(hint)) {
+                    updateHashSilently(hint);
+                }
+            }
+            saveCoordinates();
+        });
+    }
     return originalOpen.apply(this, arguments);
 };
 
@@ -79,9 +161,15 @@ function isHintChanged(newHint) {
     return newCore !== currentCore;
 }
 
-// =================== Map Helpers ===================
+// =================== Map Helpers & Lifecycle Detection ===================
 function isGoogleMap(obj) {
-    return obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function";
+    return obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function" && typeof obj.getDiv === "function";
+}
+
+function isMapValid(map) {
+    if (!isGoogleMap(map)) return false;
+    const div = map.getDiv();
+    return !!(div && document.body.contains(div));
 }
 
 function findMapInFiber(fiber) {
@@ -91,201 +179,343 @@ function findMapInFiber(fiber) {
     return findMapInFiber(fiber.child) || findMapInFiber(fiber.sibling);
 }
 
-function scan(observer) {
-    if (foundMap) return;
+function scanForMap() {
+    // Jika map saat ini masih valid di DOM dan terikat, tidak perlu scan ulang
+    if (isMapValid(foundMap)) {
+        attachMapListeners();
+        return;
+    }
+
+    // Cari map di react fiber pada semua div
     const containers = document.querySelectorAll("div");
     for (const c of containers) {
         const fiberKey = Object.keys(c).find((k) => k.startsWith("__reactFiber$"));
         if (!fiberKey) continue;
         const fiber = c[fiberKey];
         const map = findMapInFiber(fiber);
-        if (isGoogleMap(map)) {
+        if (isMapValid(map)) {
             foundMap = map;
-            observer.disconnect();
-            attachWheelHandler();
-            attachMouseHandlers();
+            attachMapListeners();
             break;
         }
     }
 }
 
-const observer = new MutationObserver(() => scan(observer));
-observer.observe(document.body, { childList: true, subtree: true });
-window.addEventListener("load", () => scan(observer));
+// MutationObserver tetap memantau DOM agar saat ronde baru me-remount map, kita otomatis re-bind
+const mapObserver = new MutationObserver(() => {
+    if (!isMapValid(foundMap)) {
+        scanForMap();
+    }
+});
+mapObserver.observe(document.body, { childList: true, subtree: true });
+window.addEventListener("load", () => scanForMap());
 
-// =================== Map Div Detector ===================
-function attachMapCursorHandler() {
-    const newMapDiv = document.querySelector("div[style*='cursor: crosshair']");
-    if (!newMapDiv || newMapDiv === mapDiv) return;
-    mapDiv = newMapDiv;
-    attachWheelHandler();
+// =================== Event Listeners Rebind Management ===================
+let currentAttachedDiv = null;
+
+function attachMapListeners() {
+    if (!isMapValid(foundMap)) return;
+    const targetEl = foundMap.getDiv();
+    if (!targetEl || targetEl === currentAttachedDiv) return;
+
+    // Bersihkan listener dari div lama jika ada perubahan DOM
+    if (currentAttachedDiv) {
+        currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
+        currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
+        currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
+        currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
+        currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+    }
+
+    currentAttachedDiv = targetEl;
+
+    targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
+    targetEl.addEventListener("mousedown", handleMouseDown);
+    targetEl.addEventListener("mouseup", handleMouseUp);
+    targetEl.addEventListener("mouseleave", handleMouseLeave);
+    targetEl.addEventListener("contextmenu", handleContextMenu);
 }
 
-// =================== Scroll Zoom (Middle Button Modifier) ===================
-function attachWheelHandler() {
-    if (!mapDiv) return;
-    mapDiv.removeEventListener("wheel", handleWheelZoom, { passive: false });
-    mapDiv.addEventListener("wheel", handleWheelZoom, { passive: false });
-}
+// =================== Human-Like Pan & Zoom (Geser Lalu Zoom Perlahan & Alami Tidak Kaku di Tengah) ===================
+let currentPanAnimId = null;
+let currentZoomTimerId = null;
 
-function handleWheelZoom(e) {
-    if (!foundMap) return;
-    if (e.buttons === 4 && dotAdded) { // scroll + tombol tengah
-        e.preventDefault();
-        const zoom = foundMap.getZoom();
-        const newZoom = Math.max(1, Math.min(21, zoom + (e.deltaY < 0 ? 1 : -1)));
-        const pivotLatLng = new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng);
-        animateZoom(foundMap, newZoom, pivotLatLng, true);
+function stopCurrentAction() {
+    if (currentPanAnimId) {
+        cancelAnimationFrame(currentPanAnimId);
+        currentPanAnimId = null;
+    }
+    if (currentZoomTimerId) {
+        clearTimeout(currentZoomTimerId);
+        currentZoomTimerId = null;
     }
 }
 
-// =================== Smooth Human-Like Pan ===================
-function smoothPanHuman(map, targetLatLng, callback) {
-    if (isPanning) return;
-    isPanning = true;
-
-    const steps = 5 + Math.floor(Math.random() * 5); // 5-9 steps
-    let currentStep = 0;
-
-    function step() {
-        if (!map) return;
-        const center = map.getCenter();
-        const latDiff = targetLatLng.lat() - center.lat();
-        const lngDiff = targetLatLng.lng() - center.lng();
-
-        const latStep = latDiff / (steps - currentStep);
-        const lngStep = lngDiff / (steps - currentStep);
-
-        const newLat = center.lat() + latStep;
-        const newLng = center.lng() + lngStep;
-
-        map.setCenter(new google.maps.LatLng(newLat, newLng));
-
-        currentStep++;
-        if (currentStep < steps) {
-            const delay = 100 + Math.random() * 150; // random delay 100-250ms
-            setTimeout(step, delay);
-        } else {
-            isPanning = false;
-            if (callback) callback();
-        }
-    }
-
-    step();
+function getShortestLngDiff(targetLng, currentLng) {
+    let diff = targetLng - currentLng;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    return diff;
 }
 
-// =================== Zoom Helper ===================
-function animateZoom(map, targetZoom, pivotLatLng, pivotCenter = false, duration = 300) {
-    if (!map || isZooming) return;
-    isZooming = true;
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+// Konversi pixel offset ke selisih Lat/Lng pada tingkat zoom tertentu (agar target tidak mati di titik tengah)
+function getPixelToLatLngOffset(pixelX, pixelY, lat, zoom) {
+    const scale = 256 * Math.pow(2, zoom);
+    const dLng = (pixelX / scale) * 360;
+    const latRad = (lat * Math.PI) / 180;
+    const dLat = -(pixelY / scale) * 360 * Math.cos(latRad);
+    return { dLat, dLng };
+}
+
+function humanPanAndZoom(map, targetLat, targetLng) {
+    if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
+
+    // Hentikan animasi atau timer zoom sebelumnya jika sedang berjalan
+    stopCurrentAction();
+
+    const startCenter = map.getCenter();
+    if (!startCenter) return;
+
+    const startLat = startCenter.lat();
+    const startLng = startCenter.lng();
     const startZoom = map.getZoom();
+
+    const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
+
+    // Tentukan target zoom bertahap manusiawi (naik 2 tingkat zoom per klik tengah, bukan loncat drastis)
+    let targetZoom = Math.min(17, startZoom + 2);
+    // Batas minimum zoom agar jika dari zoom 1-2 (peta dunia), mendarat di skala negara/kawasan yang terbaca (zoom 4-5)
+    if (distanceMeters > 2000000 && targetZoom < 4) {
+        targetZoom = 4;
+    }
+
+    // Variasi offset alami posisi pandang manusia (TIDAK kaku di pixel tengah 0,0)
+    // Manusia menempatkan target dalam pandangan mata yang nyaman, sedikit bergeser dari pusat (~20 - 45px)
+    const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
+    const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
+
+    // Hitung koordinat pusat geser yang memiliki offset alami dari titik target
+    const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
+    const panTargetLat = targetLat + panOffset.dLat;
+    const panTargetLng = targetLng + panOffset.dLng;
+
+    const dLat = panTargetLat - startLat;
+    const dLng = getShortestLngDiff(panTargetLng, startLng);
+
+    // Durasi geser santai manusiawi (peta meluncur anggun dan tenang, zoom tetap diam)
+    const panDuration = distanceMeters < 50000
+        ? 380 + Math.floor(Math.random() * 80)
+        : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
+
     const startTime = performance.now();
 
-    function frame(now) {
-        let t = Math.min(1, (now - startTime) / duration);
-        t = t * (2 - t); // easeOutQuad
-        const zoom = startZoom + (targetZoom - startZoom) * t;
+    // Lengkungan mikro gerakan tangan manusia (micro-arc) agar tidak kaku garis lurus robot
+    const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
+    const perpLat = -dLng * arcMultiplier;
+    const perpLng = dLat * arcMultiplier;
 
-        if (pivotCenter) {
-            map.setZoom(Math.round(zoom));
-            map.setCenter(pivotLatLng);
+    // === FASE 1: MENGGESER PETA TERLEBIH DAHULU (PANNING ONLY, ZOOM TETAP) ===
+    function panFrame(now) {
+        if (!isMapValid(map)) {
+            stopCurrentAction();
+            return;
+        }
+
+        const elapsed = now - startTime;
+        const rawT = Math.min(1, elapsed / panDuration);
+        const t = easeOutCubic(rawT); // Deselerasi lembut seperti tarikan tangan manusia
+
+        const arc = Math.sin(Math.PI * rawT);
+        const currentL = startLat + dLat * t + perpLat * arc;
+        const currentG = startLng + dLng * t + perpLng * arc;
+
+        map.setCenter(new google.maps.LatLng(currentL, currentG));
+
+        if (rawT < 1) {
+            currentPanAnimId = requestAnimationFrame(panFrame);
         } else {
-            map.setZoom(Math.round(zoom));
-        }
+            // Selesai menggeser: posisi target berada di area pandang secara alami (sedikit off-center)
+            map.setCenter(new google.maps.LatLng(panTargetLat, panTargetLng));
+            currentPanAnimId = null;
 
-        if (t < 1) requestAnimationFrame(frame);
-        else isZooming = false;
+            // === FASE 2: JEDA MANUSIAWI SEBELUM MEMULAI ZOOM (MATA MELIHAT LOKASI) ===
+            // Manusia berhenti sejenak (~350 - 450ms) untuk melihat pulau/daerah di layar sebelum scroll wheel
+            const humanViewPause = 350 + Math.floor(Math.random() * 100);
+            currentZoomTimerId = setTimeout(() => {
+                // === FASE 3: ZOOM PERLAHAN BERTINGKAT DENGAN DRIFT ALAMI (TIDAK KAKU DEAD-CENTER) ===
+                stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
+            }, humanViewPause);
+        }
     }
 
-    requestAnimationFrame(frame);
+    currentPanAnimId = requestAnimationFrame(panFrame);
 }
 
-// =================== Mouse Handlers ===================
-function attachMouseHandlers() {
-    if (!foundMap) return;
-    const targetEl = foundMap.getDiv();
+// Fungsi zoom perlahan bertahap dengan sedikit hand drift alami (seperti manusia memutar scroll wheel)
+function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
+    if (!isMapValid(map)) {
+        stopCurrentAction();
+        return;
+    }
 
-    targetEl.addEventListener("mousedown", async (e) => {
-        if (!foundMap) return;
+    const currentZ = map.getZoom();
+    if (currentZ < targetZoom) {
+        const nextZ = currentZ + 1;
 
-        // === klik tengah (zoom / pan) ===
-        if (e.button === 1 && dotAdded) {
-            const pivotLatLng = new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng);
-            const bounds = foundMap.getBounds();
+        // Sedikit drift acak tangan manusia saat memutar scroll wheel mouse (~4-8px)
+        const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
+        const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
+        const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
 
-            const actions = [];
-            if (bounds?.contains(pivotLatLng)) {
-                actions.push(() => {
-                    const newZoom = Math.min(21, foundMap.getZoom() + 1);
-                    animateZoom(foundMap, newZoom, pivotLatLng, false);
-                });
-            } else {
-                actions.push(() => smoothPanHuman(foundMap, pivotLatLng));
-            }
+        map.setZoom(nextZ);
+        // Map berpusat di dekat target dengan offset alami, BUKAN terkunci di titik tengah tepat
+        map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
 
-            while (actions.length) {
-                const i = Math.floor(Math.random() * actions.length);
-                const fn = actions.splice(i, 1)[0];
-                const delay = 100 + Math.random() * 200;
-                setTimeout(fn, delay);
-            }
-        }
+        // Jeda putaran scroll wheel manusia yang santai dan natural (340 - 430ms per notch)
+        const scrollDelay = 340 + Math.floor(Math.random() * 90);
+        currentZoomTimerId = setTimeout(() => {
+            stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
+        }, scrollDelay);
+    } else {
+        stopCurrentAction();
+    }
+}
 
-        // === klik kanan (tampilkan marker) ===
-        if (e.button === 2 && dotAdded) {
-            await showMapPopup(globalCoordinates.lat, globalCoordinates.lng);
-        }
-    });
-
-    // mouse up -> hapus marker kalau ada
-    targetEl.addEventListener("mouseup", (e) => {
-        if (e.button === 2 && currentMarker) {
-            currentMarker.map = null;
-            currentMarker = null;
-        }
-    });
-
-    // cegah menu klik kanan default
-    targetEl.addEventListener("contextmenu", (e) => {
+// =================== Wheel Zoom Handler ===================
+function handleWheelZoom(e) {
+    if (!isMapValid(foundMap) || !dotAdded) return;
+    // Scroll sambil tahan tombol tengah (e.buttons === 4)
+    if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
         e.preventDefault();
-    });
+        e.stopPropagation();
+        stopCurrentAction();
+        const delta = e.deltaY < 0 ? 1 : -1;
+        const currentZoom = foundMap.getZoom();
+        const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
+        foundMap.setZoom(newZoom);
+        foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
+    }
 }
 
-// =================== Marker ===================
-async function showMapPopup(lat = 0, lng = 0) {
-    if (!foundMap) {
-        const waitMap = setInterval(() => {
-            if (foundMap) {
-                clearInterval(waitMap);
-                showMapPopup(lat, lng);
-            }
-        }, 200);
+// =================== Mouse Click Handlers ===================
+function handleMouseDown(e) {
+    if (!isMapValid(foundMap)) return;
+
+    // === Klik Tengah (Geser Dulu, Lalu Zoom Perlahan) ===
+    if (e.button === 1 && dotAdded) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (globalCoordinates.lat && globalCoordinates.lng) {
+            humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+        }
         return;
     }
 
-    // === LOGIKA TOGGLE ===
+    // === Klik Kanan (Tampilkan Titik Marker Target) ===
+    if (e.button === 2 && dotAdded) {
+        e.preventDefault();
+        e.stopPropagation();
+        isRightMouseDown = true;
+        if (globalCoordinates.lat && globalCoordinates.lng) {
+            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+        }
+    }
+}
+
+function handleMouseUp(e) {
+    if (e.button === 2) {
+        isRightMouseDown = false;
+        clearMarker();
+    }
+}
+
+function handleMouseLeave() {
+    if (isRightMouseDown) {
+        isRightMouseDown = false;
+        clearMarker();
+    }
+}
+
+function handleContextMenu(e) {
+    if (dotAdded) {
+        e.preventDefault();
+    }
+}
+
+// =================== Marker Management (Thread-Safe & High Contrast) ===================
+let isRightMouseDown = false;
+
+function showMarkerAt(lat, lng) {
+    if (!isMapValid(foundMap) || !lat || !lng) return;
+
+    clearMarker();
+
+    if (!isRightMouseDown) return;
+
+    // 1. Prioritaskan google.maps.Marker bawaan (instan 0ms, 100% kompatibel di raster map GeoGuessr tanpa butuh mapId)
+    try {
+        if (typeof google !== "undefined" && google.maps && google.maps.Marker) {
+            currentMarker = new google.maps.Marker({
+                position: { lat, lng },
+                map: foundMap,
+                zIndex: 9999999,
+                clickable: false,
+                optimized: false,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 7, // Diameter 14px - sangat jelas & tajam
+                    fillColor: "#ff0038", // Merah neon menyala, sangat kontras di semua permukaan peta
+                    fillOpacity: 1.0,
+                    strokeColor: "#ffffff", // Outline putih tebal agar terlihat jelas di background gelap maupun terang
+                    strokeWeight: 2.5,
+                }
+            });
+            return;
+        }
+    } catch (err) {
+        console.warn("[AdGuards] google.maps.Marker gagal, mencoba AdvancedMarkerElement:", err);
+    }
+
+    // 2. Fallback ke AdvancedMarkerElement jika Marker klasik tidak ada
+    try {
+        if (google.maps.marker?.AdvancedMarkerElement) {
+            const pinElement = document.createElement("div");
+            pinElement.style.width = "14px";
+            pinElement.style.height = "14px";
+            pinElement.style.borderRadius = "50%";
+            pinElement.style.background = "#ff0038";
+            pinElement.style.border = "2.5px solid #ffffff";
+            pinElement.style.boxShadow = "0 0 6px rgba(0,0,0,0.7), 0 0 10px #ff0038";
+            pinElement.style.transform = "translate(-50%, -50%)";
+            pinElement.style.pointerEvents = "none";
+            pinElement.style.zIndex = "9999999";
+
+            currentMarker = new google.maps.marker.AdvancedMarkerElement({
+                map: foundMap,
+                position: { lat, lng },
+                content: pinElement,
+                zIndex: 9999999,
+            });
+        }
+    } catch (err) {
+        console.error("[AdGuards] Gagal membuat AdvancedMarkerElement:", err);
+    }
+}
+
+function clearMarker() {
     if (currentMarker) {
-        currentMarker.map = null;
+        try {
+            if (typeof currentMarker.setMap === "function") {
+                currentMarker.setMap(null);
+            }
+            currentMarker.map = null;
+        } catch (_) {}
         currentMarker = null;
-        return;
     }
-
-    if (!google.maps.marker?.AdvancedMarkerElement) {
-        await google.maps.importLibrary("marker");
-    }
-
-    const pinElement = document.createElement("div");
-    pinElement.style.width = "3px";
-    pinElement.style.height = "3px";
-    pinElement.style.borderRadius = "50%";
-    pinElement.opacity = "0.6";
-    pinElement.style.background = "green";
-
-    currentMarker = new google.maps.marker.AdvancedMarkerElement({
-        map: foundMap,
-        position: { lat, lng },
-        content: pinElement,
-    });
 }
 
 function shiftAfterComma(input = "") {
@@ -329,5 +559,28 @@ function shiftAfterComma(input = "") {
         }
     });
 
-// =================== Map Div Checker ===================
-setInterval(attachMapCursorHandler, 1000);
+// =================== Party Modal Auto-Dismiss ===================
+function dismissPartyModalIfNeeded() {
+    const dialogs = document.querySelectorAll("[role='dialog'], [class*='modal'], [class*='dialog'], div[class*='overlay']");
+    for (const dialog of dialogs) {
+        const text = dialog.textContent || "";
+        if (text.includes("Leave the party page") || text.includes("Leave the party?")) {
+            const buttons = dialog.querySelectorAll("button");
+            for (const btn of buttons) {
+                const btnText = btn.textContent.trim().toLowerCase();
+                if (btnText.includes("cancel") || btnText.includes("stay") || btnText.includes("no") || btnText.includes("batal") || btnText.includes("close")) {
+                    btn.click();
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// =================== Background Handlers ===================
+setInterval(() => {
+    if (!isMapValid(foundMap)) {
+        scanForMap();
+    }
+    dismissPartyModalIfNeeded();
+}, 1000);
