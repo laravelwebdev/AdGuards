@@ -213,6 +213,71 @@ window.addEventListener("load", () => scanForMap());
 // =================== Event Listeners Rebind Management ===================
 let currentAttachedDiv = null;
 
+// =================== Event Listeners Rebind Management ===================
+let touchTimer = null;
+let touchStartPos = { x: 0, y: 0 };
+let isTouching = false;
+let lastTouchEndTime = 0;
+
+function handleMapTouchStart(e) {
+    if (!dotAdded || !isMapValid(foundMap)) return;
+    if (e.touches && e.touches.length > 1) {
+        if (touchTimer) clearTimeout(touchTimer);
+        return;
+    }
+
+    const touch = e.touches[0];
+    touchStartPos = { x: touch.clientX, y: touch.clientY };
+    isTouching = true;
+
+    // Double-tap: Human Pan and Zoom (pengganti Klik Tengah di Android)
+    const now = Date.now();
+    if (now - lastTouchEndTime < 300) {
+        if (touchTimer) clearTimeout(touchTimer);
+        lastTouchEndTime = 0;
+        if (globalCoordinates.lat && globalCoordinates.lng) {
+            humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+        }
+        return;
+    }
+
+    // Long Press: Tahan ~350ms untuk lihat titik (pengganti Klik Kanan di Android)
+    if (touchTimer) clearTimeout(touchTimer);
+    touchTimer = setTimeout(() => {
+        if (isTouching && dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
+            isRightMouseDown = true;
+            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+        }
+    }, 350);
+}
+
+function handleMapTouchMove(e) {
+    if (e.touches && e.touches.length > 0) {
+        const touch = e.touches[0];
+        const dx = Math.abs(touch.clientX - touchStartPos.x);
+        const dy = Math.abs(touch.clientY - touchStartPos.y);
+        if (dx > 12 || dy > 12) {
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+        }
+    }
+}
+
+function handleMapTouchEnd() {
+    lastTouchEndTime = Date.now();
+    isTouching = false;
+    if (touchTimer) {
+        clearTimeout(touchTimer);
+        touchTimer = null;
+    }
+    if (isRightMouseDown) {
+        isRightMouseDown = false;
+        clearMarker();
+    }
+}
+
 function attachMapListeners() {
     if (!isMapValid(foundMap)) return;
     const targetEl = foundMap.getDiv();
@@ -225,6 +290,10 @@ function attachMapListeners() {
         currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
         currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
         currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+        currentAttachedDiv.removeEventListener("touchstart", handleMapTouchStart);
+        currentAttachedDiv.removeEventListener("touchmove", handleMapTouchMove);
+        currentAttachedDiv.removeEventListener("touchend", handleMapTouchEnd);
+        currentAttachedDiv.removeEventListener("touchcancel", handleMapTouchEnd);
     }
 
     currentAttachedDiv = targetEl;
@@ -234,6 +303,12 @@ function attachMapListeners() {
     targetEl.addEventListener("mouseup", handleMouseUp);
     targetEl.addEventListener("mouseleave", handleMouseLeave);
     targetEl.addEventListener("contextmenu", handleContextMenu);
+
+    // Touch listener khusus Android / touchscreen
+    targetEl.addEventListener("touchstart", handleMapTouchStart, { passive: true });
+    targetEl.addEventListener("touchmove", handleMapTouchMove, { passive: true });
+    targetEl.addEventListener("touchend", handleMapTouchEnd, { passive: true });
+    targetEl.addEventListener("touchcancel", handleMapTouchEnd, { passive: true });
 }
 
 // =================== Human-Like Pan & Zoom (Geser Lalu Zoom Perlahan & Alami Tidak Kaku di Tengah) ===================
@@ -448,15 +523,13 @@ function handleContextMenu(e) {
 
 // =================== Marker Management (Thread-Safe & High Contrast) ===================
 let isRightMouseDown = false;
-let isKeyMarkerActive = false;
-let keyPressStartTime = 0;
 
 function showMarkerAt(lat, lng) {
     if (!isMapValid(foundMap) || !lat || !lng) return;
 
     clearMarker();
 
-    if (!isRightMouseDown && !isKeyMarkerActive) return;
+    if (!isRightMouseDown) return;
 
     // 1. Prioritaskan google.maps.Marker bawaan (instan 0ms, 100% kompatibel di raster map GeoGuessr tanpa butuh mapId)
     try {
@@ -518,7 +591,6 @@ function clearMarker() {
         } catch (_) {}
         currentMarker = null;
     }
-    isKeyMarkerActive = false;
 }
 
 function shiftAfterComma(input = "") {
@@ -560,78 +632,86 @@ function isTermsElement(target) {
 function syncTermsText() {
     const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
     links.forEach(link => {
+        // Hapus atribut link agar browser TIDAK BISA membuka halaman Google sama sekali (di Android & PC)
+        if (link.hasAttribute("href")) {
+            link.removeAttribute("href");
+        }
+        link.removeAttribute("target");
+        link.removeAttribute("rel");
+        link.style.cursor = "pointer";
+        link.style.userSelect = "none";
+        link.style.webkitUserSelect = "none";
+        link.style.touchAction = "manipulation";
+
         const desired = dotAdded ? "Map Terms" : "Terms";
         if (link.textContent !== desired) {
             link.textContent = desired;
+        }
+
+        if (!link.__adguards_bound) {
+            link.__adguards_bound = true;
+            const toggleHandler = function(e) {
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                }
+                dotAdded = !dotAdded;
+                syncTermsText();
+                if (!dotAdded) {
+                    isRightMouseDown = false;
+                    clearMarker();
+                }
+                return false;
+            };
+            link.addEventListener("click", toggleHandler, true);
+            link.addEventListener("touchend", toggleHandler, true);
+            link.addEventListener("pointerdown", toggleHandler, true);
+            link.onclick = toggleHandler;
         }
     });
 }
 
 function handleTermsTrigger(e) {
     if (isTermsElement(e.target)) {
-        // Hilangkan action behavior bawaan Google Maps (tidak membuka tab baru)
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
 
-        // Toggle aktivasi / deaktivasi fitur
         dotAdded = !dotAdded;
         syncTermsText();
 
-        // Jika dimatikan, bersihkan marker jika sedang muncul
         if (!dotAdded) {
             isRightMouseDown = false;
-            isKeyMarkerActive = false;
             clearMarker();
         }
+        return false;
     }
 }
 
+// Capture di window & document agar mendahului listener Google Maps
+window.addEventListener("click", handleTermsTrigger, true);
+window.addEventListener("touchend", handleTermsTrigger, true);
+window.addEventListener("pointerdown", handleTermsTrigger, true);
 document.addEventListener("click", handleTermsTrigger, true);
 document.addEventListener("touchend", handleTermsTrigger, true);
+document.addEventListener("pointerdown", handleTermsTrigger, true);
 
-// =================== Keyboard Shortcut (Lihat Titik Koordinat) ===================
-// Menimpa action bawaan tombol [G] / shortcut agar tidak memicu aksi browser/game
+// =================== PC Keyboard Listener (Tekan G untuk Aktifkan) ===================
 document.addEventListener("keydown", (e) => {
     const key = e.key ? e.key.toLowerCase() : "";
+
+    // Tekan 'G' untuk MENGAKTIFKAN fitur (Terms berubah jadi Map Terms)
     if (key === "g") {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-
-        if (!dotAdded || !isMapValid(foundMap)) return;
-        if (e.repeat) return;
-
-        if (currentMarker && !isRightMouseDown) {
-            isKeyMarkerActive = false;
-            clearMarker();
-            return;
-        }
-
-        keyPressStartTime = Date.now();
-        isKeyMarkerActive = true;
-        if (globalCoordinates.lat && globalCoordinates.lng) {
-            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
-        }
+        dotAdded = true;
+        syncTermsText();
+    } else if (key !== " " && !isRightMouseDown) {
+        // Tekan tombol selain spasi untuk MEMATIKAN fitur (Map Terms kembali jadi Terms)
+        dotAdded = false;
+        syncTermsText();
+        clearMarker();
     }
-}, true);
-
-document.addEventListener("keyup", (e) => {
-    const key = e.key ? e.key.toLowerCase() : "";
-    if (key === "g") {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-
-        if (!dotAdded) return;
-
-        const holdDuration = Date.now() - keyPressStartTime;
-        if (holdDuration >= 250) {
-            isKeyMarkerActive = false;
-            clearMarker();
-        }
-    }
-}, true);
+});
 
 // =================== Party Modal Auto-Dismiss ===================
 function dismissPartyModalIfNeeded() {
