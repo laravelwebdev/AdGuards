@@ -8,11 +8,17 @@ let foundMap = null;
 let hint = "";
 let dotAdded = false;
 let currentMarker = null;
+let isRightMouseDown = false;
+let currentAttachedDiv = null;
+let isScanning = false;
+let scanTimeout = null;
 
 // =================== Helper to Save ===================
 function saveCoordinates() {
-    localStorage.setItem("globalCoordinates", JSON.stringify(globalCoordinates));
-    localStorage.setItem("globalPlace", JSON.stringify(globalPlace));
+    try {
+        localStorage.setItem("globalCoordinates", JSON.stringify(globalCoordinates));
+        localStorage.setItem("globalPlace", JSON.stringify(globalPlace));
+    } catch (_) {}
 }
 
 // =================== Distance & Game Tracking Helpers ===================
@@ -32,8 +38,12 @@ function isAlreadyPlayed(lat, lng) {
 }
 
 function getGameIdFromUrl() {
-    const match = location.pathname.match(/\/(game|challenge|duels|live-challenge|party)\/([a-zA-Z0-9_-]+)/);
-    return match ? match[2] : location.pathname;
+    try {
+        const match = location.pathname.match(/\/(game|challenge|duels|live-challenge|party)\/([a-zA-Z0-9_-]+)/);
+        return match ? match[2] : location.pathname;
+    } catch (_) {
+        return "";
+    }
 }
 
 function checkGameReset() {
@@ -55,163 +65,259 @@ function updateHashSilently(newHint) {
             window.history.replaceState(window.history.state, "", newUrl);
         }
     } catch (e) {
-        location.hash = newHint;
+        try {
+            location.hash = newHint;
+        } catch (_) {}
     }
 }
 
 // =================== Intercept Google Maps ===================
 var originalOpen = XMLHttpRequest.prototype.open;
 XMLHttpRequest.prototype.open = function (method, url) {
-    if (
-        method.toUpperCase() === "POST" &&
-        (url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/GetMetadata") ||
-            url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"))
-    ) {
-        this.addEventListener("load", function () {
-            let interceptedResult = this.responseText;
-            const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
-            const countryPattern = /"[A-Z]{2}"/g;
-            const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
+    try {
+        if (
+            typeof method === "string" && method.toUpperCase() === "POST" &&
+            typeof url === "string" &&
+            (url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/GetMetadata") ||
+             url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"))
+        ) {
+            this.addEventListener("load", function () {
+                try {
+                    if (this.responseType && this.responseType !== "" && this.responseType !== "text") return;
+                    const interceptedResult = this.responseText;
+                    if (!interceptedResult) return;
 
-            const match = interceptedResult.match(pattern)?.[0];
-            if (!match) return;
+                    const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
+                    const countryPattern = /"[A-Z]{2}"/g;
+                    const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
 
-            const [lat, lng] = match.split(",").map(Number);
-            if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+                    const match = interceptedResult.match(pattern)?.[0];
+                    if (!match) return;
 
-            checkGameReset();
+                    const [lat, lng] = match.split(",").map(Number);
+                    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
 
-            // 1. Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya.
-            // Saat ronde berakhir dan layar result/summary muncul, GeoGuessr sering memuat ulang Street View / metadata
-            // untuk ronde yang baru saja selesai. Ini akan dicegah agar tidak menimpa ronde berikutnya yang sudah di-prefetch.
-            if (isAlreadyPlayed(lat, lng)) {
-                return;
-            }
+                    checkGameReset();
 
-            // 2. Deteksi transisi ronde (jarak > 500m dari ronde aktif saat ini menandakan ronde baru)
-            let isNewRound = false;
-            if (currentRoundCoords) {
-                const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
-                if (distFromCurrent > 500) {
-                    // Ronde sebelumnya selesai dan sekarang berpindah ke ronde berikutnya (misal prefetch)
-                    if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
-                        playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
-                        if (playedRounds.length > 5) {
-                            playedRounds.shift();
+                    // Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya.
+                    if (isAlreadyPlayed(lat, lng)) {
+                        return;
+                    }
+
+                    // Deteksi transisi ronde atau retry/fallback panorama
+                    let isNewRound = false;
+                    if (currentRoundCoords) {
+                        const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
+                        if (distFromCurrent > 500) {
+                            if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
+                                playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
+                                if (playedRounds.length > 5) {
+                                    playedRounds.shift();
+                                }
+                            }
+                            currentRoundCoords = { lat, lng };
+                            isNewRound = true;
+                        } else if (distFromCurrent > 1) {
+                            // Koordinat sedikit bergeser (retry panorama / fallback point saat panorama pertama gagal)
+                            currentRoundCoords = { lat, lng };
+                            isNewRound = true;
+                        }
+                    } else {
+                        currentRoundCoords = { lat, lng };
+                        isNewRound = true;
+                    }
+
+                    if (isNewRound) {
+                        globalCoordinates.lat = lat;
+                        globalCoordinates.lng = lng;
+                    }
+
+                    const countryMatch = interceptedResult.match(countryPattern)?.[0];
+                    if (countryMatch) {
+                        try {
+                            globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
+                        } catch (_) {
+                            globalPlace.country = countryMatch.replace(/"/g, "");
+                        }
+                    } else if (isNewRound) {
+                        globalPlace.country = "";
+                    }
+
+                    const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
+                    if (stateMatch) {
+                        globalPlace.state = stateMatch;
+                    } else if (isNewRound) {
+                        globalPlace.state = "";
+                    }
+
+                    const country = globalPlace.country || "";
+                    const state = globalPlace.state || "";
+                    const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
+
+                    if (targetPlace) {
+                        hint = shiftAfterComma(targetPlace);
+                        if (isHintChanged(hint)) {
+                            updateHashSilently(hint);
                         }
                     }
-                    currentRoundCoords = { lat, lng };
-                    isNewRound = true;
-                }
-            } else {
-                currentRoundCoords = { lat, lng };
-                isNewRound = true;
-            }
-
-            // Simpan koordinat ronde jika ini ronde baru
-            if (isNewRound) {
-                globalCoordinates.lat = lat;
-                globalCoordinates.lng = lng;
-            }
-
-            const countryMatch = interceptedResult.match(countryPattern)?.[0];
-            if (countryMatch) {
-                globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
-            } else if (isNewRound) {
-                globalPlace.country = "";
-            }
-
-            const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
-            if (stateMatch) {
-                globalPlace.state = stateMatch;
-            } else if (isNewRound) {
-                globalPlace.state = "";
-            }
-
-            const country = globalPlace.country || "";
-            const state = globalPlace.state || "";
-            const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
-
-            if (targetPlace) {
-                hint = shiftAfterComma(targetPlace);
-                if (isHintChanged(hint)) {
-                    updateHashSilently(hint);
-                }
-            }
-            saveCoordinates();
-        });
-    }
+                    saveCoordinates();
+                } catch (_) {}
+            });
+        }
+    } catch (_) {}
     return originalOpen.apply(this, arguments);
 };
 
 function isHintChanged(newHint) {
-    // hint baru tidak ada → tidak berubah
     if (!newHint || newHint.trim() === "" || newHint.length < 2) return false;
-
-    // ambil hash sekarang tanpa '#'
     const current = location.hash ? location.hash.substring(1) : "";
-
-    // kalau hash belum ada → pasti berubah
     if (!current || current.length < 2) return true;
-
-    // bandingkan mulai karakter kedua (case-insensitive biar aman)
     const newCore = newHint.substring(1).toLowerCase();
     const currentCore = current.substring(1).toLowerCase();
-
     return newCore !== currentCore;
+}
+
+// =================== Hook Google Maps Constructor ===================
+function hookGoogleMapConstructor() {
+    try {
+        if (typeof google !== "undefined" && google.maps && google.maps.Map && !google.maps.Map.__adguards_hooked) {
+            const originalMapCtor = google.maps.Map;
+            google.maps.Map = function (...args) {
+                const instance = new originalMapCtor(...args);
+                try {
+                    setTimeout(() => {
+                        if (isMapValid(instance)) {
+                            foundMap = instance;
+                            attachMapListeners();
+                        }
+                    }, 50);
+                } catch (_) {}
+                return instance;
+            };
+            Object.assign(google.maps.Map, originalMapCtor);
+            google.maps.Map.prototype = originalMapCtor.prototype;
+            google.maps.Map.__adguards_hooked = true;
+        }
+    } catch (_) {}
 }
 
 // =================== Map Helpers & Lifecycle Detection ===================
 function isGoogleMap(obj) {
-    return obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function" && typeof obj.getDiv === "function";
+    try {
+        return !!(obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function" && typeof obj.getDiv === "function");
+    } catch (_) {
+        return false;
+    }
 }
 
 function isMapValid(map) {
     if (!isGoogleMap(map)) return false;
-    const div = map.getDiv();
-    return !!(div && document.body.contains(div));
+    try {
+        const div = map.getDiv();
+        if (!div || !document.body || !document.body.contains(div) || div.isConnected === false) return false;
+        if (div.offsetWidth === 0 && div.offsetHeight === 0 && div.getClientRects().length === 0) {
+            return false;
+        }
+        const center = map.getCenter();
+        return !!(center && typeof center.lat === "function" && !isNaN(center.lat()));
+    } catch (_) {
+        return false;
+    }
 }
 
-function findMapInFiber(fiber) {
-    if (!fiber) return null;
-    const props = fiber.memoizedProps;
-    if (props?.map && isGoogleMap(props.map)) return props.map;
-    return findMapInFiber(fiber.child) || findMapInFiber(fiber.sibling);
+function findMapInFiber(fiber, depth = 0) {
+    if (!fiber || depth > 35) return null;
+    try {
+        const props = fiber.memoizedProps;
+        if (props?.map && isGoogleMap(props.map) && isMapValid(props.map)) return props.map;
+        return findMapInFiber(fiber.child, depth + 1) || findMapInFiber(fiber.sibling, depth + 1);
+    } catch (_) {
+        return null;
+    }
+}
+
+function requestScanForMap(delay = 250) {
+    if (scanTimeout) return;
+    scanTimeout = setTimeout(() => {
+        scanTimeout = null;
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+        }
+    }, delay);
 }
 
 function scanForMap() {
-    // Jika map saat ini masih valid di DOM dan terikat, tidak perlu scan ulang
     if (isMapValid(foundMap)) {
         attachMapListeners();
         return;
     }
+    if (isScanning) return;
+    isScanning = true;
 
-    // Cari map di react fiber pada semua div
-    const containers = document.querySelectorAll("div");
-    for (const c of containers) {
-        const fiberKey = Object.keys(c).find((k) => k.startsWith("__reactFiber$"));
-        if (!fiberKey) continue;
-        const fiber = c[fiberKey];
-        const map = findMapInFiber(fiber);
-        if (isMapValid(map)) {
-            foundMap = map;
-            attachMapListeners();
-            break;
+    try {
+        // 1. Cek container guess-map potensial terlebih dahulu (cepat & tidak membebani CPU)
+        const candidates = document.querySelectorAll(
+            'div[data-qa="guess-map"], div[class*="guess-map"], div[class*="styles_map__"], div[class*="map-container"], div.widget-scene-canvas'
+        );
+        for (const c of candidates) {
+            const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
+            if (!fiberKey) continue;
+            const map = findMapInFiber(c[fiberKey]);
+            if (isMapValid(map)) {
+                foundMap = map;
+                attachMapListeners();
+                isScanning = false;
+                return;
+            }
         }
-    }
+
+        // 2. Fallback: Cari di kontainer umum dengan batas agar tidak membekukan tab saat error
+        const containers = document.querySelectorAll("div");
+        const maxCheck = Math.min(containers.length, 120);
+        for (let i = 0; i < maxCheck; i++) {
+            const c = containers[i];
+            const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
+            if (!fiberKey) continue;
+            const map = findMapInFiber(c[fiberKey]);
+            if (isMapValid(map)) {
+                foundMap = map;
+                attachMapListeners();
+                break;
+            }
+        }
+    } catch (_) {}
+    isScanning = false;
 }
 
-// MutationObserver tetap memantau DOM agar saat ronde baru me-remount map, kita otomatis re-bind
+// Deteksi otomatis saat layar GeoGuessr menampilkan pesan gagal memuat panorama
+function checkPanoramaFailure() {
+    try {
+        const text = document.body ? (document.body.innerText || "") : "";
+        if (
+            text.includes("Failed to load the panorama") ||
+            text.includes("Failed to load panorama") ||
+            text.includes("Could not load panorama") ||
+            text.includes("Unable to load panorama")
+        ) {
+            currentRoundCoords = null;
+            stopCurrentAction();
+            if (!isMapValid(foundMap)) {
+                foundMap = null;
+            }
+        }
+    } catch (_) {}
+}
+
+// Debounce MutationObserver agar TIDAK membekukan browser saat ronde/panorama gagal dan terjadi banjir mutasi DOM
 const mapObserver = new MutationObserver(() => {
     if (!isMapValid(foundMap)) {
-        scanForMap();
+        requestScanForMap(300);
     }
 });
-mapObserver.observe(document.body, { childList: true, subtree: true });
+if (document.body) {
+    mapObserver.observe(document.body, { childList: true, subtree: true });
+}
 window.addEventListener("load", () => scanForMap());
-
-// =================== Event Listeners Rebind Management ===================
-let currentAttachedDiv = null;
 
 // =================== Event Listeners Rebind Management ===================
 let touchTimer = null;
@@ -220,98 +326,117 @@ let isTouching = false;
 let lastTouchEndTime = 0;
 
 function handleMapTouchStart(e) {
-    if (!dotAdded || !isMapValid(foundMap)) return;
-    if (e.touches && e.touches.length > 1) {
-        if (touchTimer) clearTimeout(touchTimer);
-        return;
-    }
-
-    const touch = e.touches[0];
-    touchStartPos = { x: touch.clientX, y: touch.clientY };
-    isTouching = true;
-
-    // Double-tap: Human Pan and Zoom (pengganti Klik Tengah di Android)
-    const now = Date.now();
-    if (now - lastTouchEndTime < 300) {
-        if (touchTimer) clearTimeout(touchTimer);
-        lastTouchEndTime = 0;
-        if (globalCoordinates.lat && globalCoordinates.lng) {
-            humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+    try {
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+            if (!isMapValid(foundMap)) return;
         }
-        return;
-    }
-
-    // Long Press: Tahan ~350ms untuk lihat titik (pengganti Klik Kanan di Android)
-    if (touchTimer) clearTimeout(touchTimer);
-    touchTimer = setTimeout(() => {
-        if (isTouching && dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
-            isRightMouseDown = true;
-            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+        if (!dotAdded) return;
+        if (e.touches && e.touches.length > 1) {
+            if (touchTimer) clearTimeout(touchTimer);
+            return;
         }
-    }, 350);
+
+        const touch = e.touches[0];
+        touchStartPos = { x: touch.clientX, y: touch.clientY };
+        isTouching = true;
+
+        const now = Date.now();
+        if (now - lastTouchEndTime < 300) {
+            if (touchTimer) clearTimeout(touchTimer);
+            lastTouchEndTime = 0;
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+            }
+            return;
+        }
+
+        if (touchTimer) clearTimeout(touchTimer);
+        touchTimer = setTimeout(() => {
+            if (isTouching && dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
+                isRightMouseDown = true;
+                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+            }
+        }, 350);
+    } catch (_) {}
 }
 
 function handleMapTouchMove(e) {
-    if (e.touches && e.touches.length > 0) {
-        const touch = e.touches[0];
-        const dx = Math.abs(touch.clientX - touchStartPos.x);
-        const dy = Math.abs(touch.clientY - touchStartPos.y);
-        if (dx > 12 || dy > 12) {
-            if (touchTimer) {
-                clearTimeout(touchTimer);
-                touchTimer = null;
+    try {
+        if (e.touches && e.touches.length > 0) {
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchStartPos.x);
+            const dy = Math.abs(touch.clientY - touchStartPos.y);
+            if (dx > 12 || dy > 12) {
+                if (touchTimer) {
+                    clearTimeout(touchTimer);
+                    touchTimer = null;
+                }
             }
         }
-    }
+    } catch (_) {}
 }
 
 function handleMapTouchEnd() {
-    lastTouchEndTime = Date.now();
-    isTouching = false;
-    if (touchTimer) {
-        clearTimeout(touchTimer);
-        touchTimer = null;
-    }
-    if (isRightMouseDown) {
-        isRightMouseDown = false;
-        clearMarker();
-    }
+    try {
+        lastTouchEndTime = Date.now();
+        isTouching = false;
+        if (touchTimer) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+        if (isRightMouseDown) {
+            isRightMouseDown = false;
+            clearMarker();
+        }
+    } catch (_) {}
 }
 
 function attachMapListeners() {
     if (!isMapValid(foundMap)) return;
-    const targetEl = foundMap.getDiv();
-    if (!targetEl || targetEl === currentAttachedDiv) return;
+    try {
+        const targetEl = foundMap.getDiv();
+        if (!targetEl) return;
 
-    // Bersihkan listener dari div lama jika ada perubahan DOM
-    if (currentAttachedDiv) {
-        currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
-        currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
-        currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
-        currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
-        currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
-        currentAttachedDiv.removeEventListener("touchstart", handleMapTouchStart);
-        currentAttachedDiv.removeEventListener("touchmove", handleMapTouchMove);
-        currentAttachedDiv.removeEventListener("touchend", handleMapTouchEnd);
-        currentAttachedDiv.removeEventListener("touchcancel", handleMapTouchEnd);
-    }
+        if (targetEl !== currentAttachedDiv) {
+            if (currentAttachedDiv) {
+                currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
+                currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
+                currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
+                currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
+                currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+                currentAttachedDiv.removeEventListener("touchstart", handleMapTouchStart);
+                currentAttachedDiv.removeEventListener("touchmove", handleMapTouchMove);
+                currentAttachedDiv.removeEventListener("touchend", handleMapTouchEnd);
+                currentAttachedDiv.removeEventListener("touchcancel", handleMapTouchEnd);
+            }
+            currentAttachedDiv = targetEl;
+        }
 
-    currentAttachedDiv = targetEl;
+        targetEl.removeEventListener("wheel", handleWheelZoom);
+        targetEl.removeEventListener("mousedown", handleMouseDown);
+        targetEl.removeEventListener("mouseup", handleMouseUp);
+        targetEl.removeEventListener("mouseleave", handleMouseLeave);
+        targetEl.removeEventListener("contextmenu", handleContextMenu);
+        targetEl.removeEventListener("touchstart", handleMapTouchStart);
+        targetEl.removeEventListener("touchmove", handleMapTouchMove);
+        targetEl.removeEventListener("touchend", handleMapTouchEnd);
+        targetEl.removeEventListener("touchcancel", handleMapTouchEnd);
 
-    targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
-    targetEl.addEventListener("mousedown", handleMouseDown);
-    targetEl.addEventListener("mouseup", handleMouseUp);
-    targetEl.addEventListener("mouseleave", handleMouseLeave);
-    targetEl.addEventListener("contextmenu", handleContextMenu);
+        targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
+        targetEl.addEventListener("mousedown", handleMouseDown);
+        targetEl.addEventListener("mouseup", handleMouseUp);
+        targetEl.addEventListener("mouseleave", handleMouseLeave);
+        targetEl.addEventListener("contextmenu", handleContextMenu);
 
-    // Touch listener khusus Android / touchscreen
-    targetEl.addEventListener("touchstart", handleMapTouchStart, { passive: true });
-    targetEl.addEventListener("touchmove", handleMapTouchMove, { passive: true });
-    targetEl.addEventListener("touchend", handleMapTouchEnd, { passive: true });
-    targetEl.addEventListener("touchcancel", handleMapTouchEnd, { passive: true });
+        targetEl.addEventListener("touchstart", handleMapTouchStart, { passive: true });
+        targetEl.addEventListener("touchmove", handleMapTouchMove, { passive: true });
+        targetEl.addEventListener("touchend", handleMapTouchEnd, { passive: true });
+        targetEl.addEventListener("touchcancel", handleMapTouchEnd, { passive: true });
+    } catch (_) {}
 }
 
-// =================== Human-Like Pan & Zoom (Geser Lalu Zoom Perlahan & Alami Tidak Kaku di Tengah) ===================
+// =================== Human-Like Pan & Zoom ===================
 let currentPanAnimId = null;
 let currentZoomTimerId = null;
 
@@ -337,7 +462,6 @@ function easeOutCubic(t) {
     return 1 - Math.pow(1 - t, 3);
 }
 
-// Konversi pixel offset ke selisih Lat/Lng pada tingkat zoom tertentu (agar target tidak mati di titik tengah)
 function getPixelToLatLngOffset(pixelX, pixelY, lat, zoom) {
     const scale = 256 * Math.pow(2, zoom);
     const dLng = (pixelX / scale) * 360;
@@ -347,172 +471,182 @@ function getPixelToLatLngOffset(pixelX, pixelY, lat, zoom) {
 }
 
 function humanPanAndZoom(map, targetLat, targetLng) {
-    if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
+    try {
+        if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
 
-    // Hentikan animasi atau timer zoom sebelumnya jika sedang berjalan
-    stopCurrentAction();
+        stopCurrentAction();
 
-    const startCenter = map.getCenter();
-    if (!startCenter) return;
+        const startCenter = map.getCenter();
+        if (!startCenter || typeof startCenter.lat !== "function") return;
 
-    const startLat = startCenter.lat();
-    const startLng = startCenter.lng();
-    const startZoom = map.getZoom();
+        const startLat = startCenter.lat();
+        const startLng = startCenter.lng();
+        const startZoom = map.getZoom();
 
-    const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
+        const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
 
-    // Tentukan target zoom bertahap manusiawi (naik 2 tingkat zoom per klik tengah, bukan loncat drastis)
-    let targetZoom = Math.min(17, startZoom + 2);
-    // Batas minimum zoom agar jika dari zoom 1-2 (peta dunia), mendarat di skala negara/kawasan yang terbaca (zoom 4-5)
-    if (distanceMeters > 2000000 && targetZoom < 4) {
-        targetZoom = 4;
+        let targetZoom = Math.min(17, startZoom + 2);
+        if (distanceMeters > 2000000 && targetZoom < 4) {
+            targetZoom = 4;
+        }
+
+        const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
+        const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
+
+        const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
+        const panTargetLat = targetLat + panOffset.dLat;
+        const panTargetLng = targetLng + panOffset.dLng;
+
+        const dLat = panTargetLat - startLat;
+        const dLng = getShortestLngDiff(panTargetLng, startLng);
+
+        const panDuration = distanceMeters < 50000
+            ? 380 + Math.floor(Math.random() * 80)
+            : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
+
+        const startTime = performance.now();
+
+        const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
+        const perpLat = -dLng * arcMultiplier;
+        const perpLng = dLat * arcMultiplier;
+
+        function panFrame(now) {
+            try {
+                if (!isMapValid(map)) {
+                    stopCurrentAction();
+                    return;
+                }
+
+                const elapsed = now - startTime;
+                const rawT = Math.min(1, elapsed / panDuration);
+                const t = easeOutCubic(rawT);
+
+                const arc = Math.sin(Math.PI * rawT);
+                const currentL = startLat + dLat * t + perpLat * arc;
+                const currentG = startLng + dLng * t + perpLng * arc;
+
+                if (typeof google !== "undefined" && google.maps) {
+                    map.setCenter(new google.maps.LatLng(currentL, currentG));
+                }
+
+                if (rawT < 1) {
+                    currentPanAnimId = requestAnimationFrame(panFrame);
+                } else {
+                    if (typeof google !== "undefined" && google.maps) {
+                        map.setCenter(new google.maps.LatLng(panTargetLat, panTargetLng));
+                    }
+                    currentPanAnimId = null;
+
+                    const humanViewPause = 350 + Math.floor(Math.random() * 100);
+                    currentZoomTimerId = setTimeout(() => {
+                        stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
+                    }, humanViewPause);
+                }
+            } catch (_) {
+                stopCurrentAction();
+            }
+        }
+
+        currentPanAnimId = requestAnimationFrame(panFrame);
+    } catch (_) {
+        stopCurrentAction();
     }
+}
 
-    // Variasi offset alami posisi pandang manusia (TIDAK kaku di pixel tengah 0,0)
-    // Manusia menempatkan target dalam pandangan mata yang nyaman, sedikit bergeser dari pusat (~20 - 45px)
-    const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
-    const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
-
-    // Hitung koordinat pusat geser yang memiliki offset alami dari titik target
-    const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
-    const panTargetLat = targetLat + panOffset.dLat;
-    const panTargetLng = targetLng + panOffset.dLng;
-
-    const dLat = panTargetLat - startLat;
-    const dLng = getShortestLngDiff(panTargetLng, startLng);
-
-    // Durasi geser santai manusiawi (peta meluncur anggun dan tenang, zoom tetap diam)
-    const panDuration = distanceMeters < 50000
-        ? 380 + Math.floor(Math.random() * 80)
-        : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
-
-    const startTime = performance.now();
-
-    // Lengkungan mikro gerakan tangan manusia (micro-arc) agar tidak kaku garis lurus robot
-    const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
-    const perpLat = -dLng * arcMultiplier;
-    const perpLng = dLat * arcMultiplier;
-
-    // === FASE 1: MENGGESER PETA TERLEBIH DAHULU (PANNING ONLY, ZOOM TETAP) ===
-    function panFrame(now) {
+function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
+    try {
         if (!isMapValid(map)) {
             stopCurrentAction();
             return;
         }
 
-        const elapsed = now - startTime;
-        const rawT = Math.min(1, elapsed / panDuration);
-        const t = easeOutCubic(rawT); // Deselerasi lembut seperti tarikan tangan manusia
+        const currentZ = map.getZoom();
+        if (currentZ < targetZoom) {
+            const nextZ = currentZ + 1;
+            const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
+            const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
+            const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
 
-        const arc = Math.sin(Math.PI * rawT);
-        const currentL = startLat + dLat * t + perpLat * arc;
-        const currentG = startLng + dLng * t + perpLng * arc;
+            map.setZoom(nextZ);
+            if (typeof google !== "undefined" && google.maps) {
+                map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
+            }
 
-        map.setCenter(new google.maps.LatLng(currentL, currentG));
-
-        if (rawT < 1) {
-            currentPanAnimId = requestAnimationFrame(panFrame);
-        } else {
-            // Selesai menggeser: posisi target berada di area pandang secara alami (sedikit off-center)
-            map.setCenter(new google.maps.LatLng(panTargetLat, panTargetLng));
-            currentPanAnimId = null;
-
-            // === FASE 2: JEDA MANUSIAWI SEBELUM MEMULAI ZOOM (MATA MELIHAT LOKASI) ===
-            // Manusia berhenti sejenak (~350 - 450ms) untuk melihat pulau/daerah di layar sebelum scroll wheel
-            const humanViewPause = 350 + Math.floor(Math.random() * 100);
+            const scrollDelay = 340 + Math.floor(Math.random() * 90);
             currentZoomTimerId = setTimeout(() => {
-                // === FASE 3: ZOOM PERLAHAN BERTINGKAT DENGAN DRIFT ALAMI (TIDAK KAKU DEAD-CENTER) ===
-                stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
-            }, humanViewPause);
+                stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
+            }, scrollDelay);
+        } else {
+            stopCurrentAction();
         }
-    }
-
-    currentPanAnimId = requestAnimationFrame(panFrame);
-}
-
-// Fungsi zoom perlahan bertahap dengan sedikit hand drift alami (seperti manusia memutar scroll wheel)
-function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
-    if (!isMapValid(map)) {
-        stopCurrentAction();
-        return;
-    }
-
-    const currentZ = map.getZoom();
-    if (currentZ < targetZoom) {
-        const nextZ = currentZ + 1;
-
-        // Sedikit drift acak tangan manusia saat memutar scroll wheel mouse (~4-8px)
-        const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
-        const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
-        const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
-
-        map.setZoom(nextZ);
-        // Map berpusat di dekat target dengan offset alami, BUKAN terkunci di titik tengah tepat
-        map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
-
-        // Jeda putaran scroll wheel manusia yang santai dan natural (340 - 430ms per notch)
-        const scrollDelay = 340 + Math.floor(Math.random() * 90);
-        currentZoomTimerId = setTimeout(() => {
-            stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
-        }, scrollDelay);
-    } else {
+    } catch (_) {
         stopCurrentAction();
     }
 }
 
 // =================== Wheel Zoom Handler ===================
 function handleWheelZoom(e) {
-    if (!isMapValid(foundMap) || !dotAdded) return;
-    // Scroll sambil tahan tombol tengah (e.buttons === 4)
-    if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
-        e.preventDefault();
-        e.stopPropagation();
-        stopCurrentAction();
-        const delta = e.deltaY < 0 ? 1 : -1;
-        const currentZoom = foundMap.getZoom();
-        const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
-        foundMap.setZoom(newZoom);
-        foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
-    }
+    try {
+        if (!isMapValid(foundMap) || !dotAdded) return;
+        if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
+            e.preventDefault();
+            e.stopPropagation();
+            stopCurrentAction();
+            const delta = e.deltaY < 0 ? 1 : -1;
+            const currentZoom = foundMap.getZoom();
+            const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
+            foundMap.setZoom(newZoom);
+            if (typeof google !== "undefined" && google.maps) {
+                foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
+            }
+        }
+    } catch (_) {}
 }
 
 // =================== Mouse Click Handlers ===================
 function handleMouseDown(e) {
-    if (!isMapValid(foundMap)) return;
-
-    // === Klik Tengah (Geser Dulu, Lalu Zoom Perlahan) ===
-    if (e.button === 1 && dotAdded) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (globalCoordinates.lat && globalCoordinates.lng) {
-            humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+    try {
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+            if (!isMapValid(foundMap)) return;
         }
-        return;
-    }
 
-    // === Klik Kanan (Tampilkan Titik Marker Target) ===
-    if (e.button === 2 && dotAdded) {
-        e.preventDefault();
-        e.stopPropagation();
-        isRightMouseDown = true;
-        if (globalCoordinates.lat && globalCoordinates.lng) {
-            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+        if (e.button === 1 && dotAdded) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+            }
+            return;
         }
-    }
+
+        if (e.button === 2 && dotAdded) {
+            e.preventDefault();
+            e.stopPropagation();
+            isRightMouseDown = true;
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+            }
+        }
+    } catch (_) {}
 }
 
 function handleMouseUp(e) {
-    if (e.button === 2) {
-        isRightMouseDown = false;
-        clearMarker();
-    }
+    try {
+        if (e.button === 2) {
+            isRightMouseDown = false;
+            clearMarker();
+        }
+    } catch (_) {}
 }
 
 function handleMouseLeave() {
-    if (isRightMouseDown) {
-        isRightMouseDown = false;
-        clearMarker();
-    }
+    try {
+        if (isRightMouseDown) {
+            isRightMouseDown = false;
+            clearMarker();
+        }
+    } catch (_) {}
 }
 
 function handleContextMenu(e) {
@@ -521,18 +655,14 @@ function handleContextMenu(e) {
     }
 }
 
-// =================== Marker Management (Thread-Safe & High Contrast) ===================
-let isRightMouseDown = false;
-
+// =================== Marker Management ===================
 function showMarkerAt(lat, lng) {
-    if (!isMapValid(foundMap) || !lat || !lng) return;
-
-    clearMarker();
-
-    if (!isRightMouseDown) return;
-
-    // 1. Prioritaskan google.maps.Marker bawaan (instan 0ms, 100% kompatibel di raster map GeoGuessr tanpa butuh mapId)
     try {
+        if (!isMapValid(foundMap) || !lat || !lng) return;
+
+        clearMarker();
+        if (!isRightMouseDown) return;
+
         if (typeof google !== "undefined" && google.maps && google.maps.Marker) {
             currentMarker = new google.maps.Marker({
                 position: { lat, lng },
@@ -542,22 +672,17 @@ function showMarkerAt(lat, lng) {
                 optimized: false,
                 icon: {
                     path: google.maps.SymbolPath.CIRCLE,
-                    scale: 2, // Diameter 4px (ukuran kecil original, tidak mencolok)
-                    fillColor: "#0088ff", // Biru elektrik yang jelas namun tidak berlebihan
+                    scale: 2,
+                    fillColor: "#0088ff",
                     fillOpacity: 1.0,
-                    strokeColor: "#ffffff", // Outline putih tipis 1px agar kontras
+                    strokeColor: "#ffffff",
                     strokeWeight: 1,
                 }
             });
             return;
         }
-    } catch (err) {
-        console.warn("[AdGuards] google.maps.Marker gagal, mencoba AdvancedMarkerElement:", err);
-    }
 
-    // 2. Fallback ke AdvancedMarkerElement jika Marker klasik tidak ada
-    try {
-        if (google.maps.marker?.AdvancedMarkerElement) {
+        if (typeof google !== "undefined" && google.maps?.marker?.AdvancedMarkerElement) {
             const pinElement = document.createElement("div");
             pinElement.style.width = "4px";
             pinElement.style.height = "4px";
@@ -576,120 +701,128 @@ function showMarkerAt(lat, lng) {
                 zIndex: 9999999,
             });
         }
-    } catch (err) {
-        console.error("[AdGuards] Gagal membuat AdvancedMarkerElement:", err);
-    }
+    } catch (_) {}
 }
 
 function clearMarker() {
-    if (currentMarker) {
-        try {
+    try {
+        if (currentMarker) {
             if (typeof currentMarker.setMap === "function") {
                 currentMarker.setMap(null);
             }
             currentMarker.map = null;
-        } catch (_) {}
+            currentMarker = null;
+        }
+    } catch (_) {
         currentMarker = null;
     }
 }
 
 function shiftAfterComma(input = "") {
-  // Ambil bagian setelah koma (kalau ada)
-  const parts = input.split(",");
-  const text = parts.length > 1 ? parts.slice(1).join(",").trim() : input;
+    try {
+        const parts = input.split(",");
+        const text = parts.length > 1 ? parts.slice(1).join(",").trim() : input;
 
-  // Marker random (huruf a-z atau A-Z)
-  const isUpper = Math.random() < 0.5; // 50% uppercase
-  const charCode = 97 + Math.floor(Math.random() * 26);
-  const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
+        const isUpper = Math.random() < 0.5;
+        const charCode = 97 + Math.floor(Math.random() * 26);
+        const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
 
+        const result = text.split("").map(ch => {
+            if (ch === " ") return "-";
+            if (/[a-zA-Z]/.test(ch)) {
+                const base = ch === ch.toUpperCase() ? 65 : 97;
+                const code = ch.charCodeAt(0) - base;
+                const newCode = (code - 1 + 26) % 26;
+                return String.fromCharCode(base + newCode);
+            }
+            return ch;
+        }).join("");
 
-  const result = text.split("").map(ch => {
-    if (ch === " ") return "-"; // spasi jadi strip
-
-    if (/[a-zA-Z]/.test(ch)) {
-      const base = ch === ch.toUpperCase() ? 65 : 97;
-      const code = ch.charCodeAt(0) - base;
-      const newCode = (code - 1 + 26) % 26; // geser mundur
-      return String.fromCharCode(base + newCode);
+        return marker + result;
+    } catch (_) {
+        return "";
     }
-
-    return ch; // karakter lain tetap
-  }).join("");
-
-  return marker + result;
 }
-// =================== Terms Interceptor (Aktivasi / Deaktivasi) ===================
+
+// =================== Terms Interceptor ===================
 function isTermsElement(target) {
     if (!target) return false;
-    const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
-    if (!a) return false;
-    const text = (a.textContent || "").trim();
-    const href = (a.getAttribute("href") || "").toLowerCase();
-    return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
-}
-
-function syncTermsText() {
-    const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
-    links.forEach(link => {
-        // Hapus atribut link agar browser TIDAK BISA membuka halaman Google sama sekali (di Android & PC)
-        if (link.hasAttribute("href")) {
-            link.removeAttribute("href");
-        }
-        link.removeAttribute("target");
-        link.removeAttribute("rel");
-        link.style.cursor = "pointer";
-        link.style.userSelect = "none";
-        link.style.webkitUserSelect = "none";
-        link.style.touchAction = "manipulation";
-
-        const desired = dotAdded ? "Map Terms" : "Terms";
-        if (link.textContent !== desired) {
-            link.textContent = desired;
-        }
-
-        if (!link.__adguards_bound) {
-            link.__adguards_bound = true;
-            const toggleHandler = function(e) {
-                if (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.stopImmediatePropagation();
-                }
-                dotAdded = !dotAdded;
-                syncTermsText();
-                if (!dotAdded) {
-                    isRightMouseDown = false;
-                    clearMarker();
-                }
-                return false;
-            };
-            link.addEventListener("click", toggleHandler, true);
-            link.addEventListener("touchend", toggleHandler, true);
-            link.addEventListener("pointerdown", toggleHandler, true);
-            link.onclick = toggleHandler;
-        }
-    });
-}
-
-function handleTermsTrigger(e) {
-    if (isTermsElement(e.target)) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-
-        dotAdded = !dotAdded;
-        syncTermsText();
-
-        if (!dotAdded) {
-            isRightMouseDown = false;
-            clearMarker();
-        }
+    try {
+        const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
+        if (!a) return false;
+        const text = (a.textContent || "").trim();
+        const href = (a.getAttribute("href") || "").toLowerCase();
+        return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
+    } catch (_) {
         return false;
     }
 }
 
-// Capture di window & document agar mendahului listener Google Maps
+function syncTermsText() {
+    try {
+        const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+        links.forEach(link => {
+            try {
+                if (link.hasAttribute("href")) {
+                    link.removeAttribute("href");
+                }
+                link.removeAttribute("target");
+                link.removeAttribute("rel");
+                link.style.cursor = "pointer";
+                link.style.userSelect = "none";
+                link.style.webkitUserSelect = "none";
+                link.style.touchAction = "manipulation";
+
+                const desired = dotAdded ? "Map Terms" : "Terms";
+                if (link.textContent !== desired) {
+                    link.textContent = desired;
+                }
+
+                if (!link.__adguards_bound) {
+                    link.__adguards_bound = true;
+                    const toggleHandler = function(e) {
+                        if (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
+                        }
+                        dotAdded = !dotAdded;
+                        syncTermsText();
+                        if (!dotAdded) {
+                            isRightMouseDown = false;
+                            clearMarker();
+                        }
+                        return false;
+                    };
+                    link.addEventListener("click", toggleHandler, true);
+                    link.addEventListener("touchend", toggleHandler, true);
+                    link.addEventListener("pointerdown", toggleHandler, true);
+                    link.onclick = toggleHandler;
+                }
+            } catch (_) {}
+        });
+    } catch (_) {}
+}
+
+function handleTermsTrigger(e) {
+    try {
+        if (isTermsElement(e.target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            dotAdded = !dotAdded;
+            syncTermsText();
+
+            if (!dotAdded) {
+                isRightMouseDown = false;
+                clearMarker();
+            }
+            return false;
+        }
+    } catch (_) {}
+}
+
 window.addEventListener("click", handleTermsTrigger, true);
 window.addEventListener("touchend", handleTermsTrigger, true);
 window.addEventListener("pointerdown", handleTermsTrigger, true);
@@ -697,45 +830,50 @@ document.addEventListener("click", handleTermsTrigger, true);
 document.addEventListener("touchend", handleTermsTrigger, true);
 document.addEventListener("pointerdown", handleTermsTrigger, true);
 
-// =================== PC Keyboard Listener (Tekan G untuk Aktifkan) ===================
+// =================== Keyboard Listener (Shortcut G) ===================
 document.addEventListener("keydown", (e) => {
-    const key = e.key ? e.key.toLowerCase() : "";
-
-    // Tekan 'G' untuk MENGAKTIFKAN fitur (Terms berubah jadi Map Terms)
-    if (key === "g") {
-        dotAdded = true;
-        syncTermsText();
-    } else if (key !== " " && !isRightMouseDown) {
-        // Tekan tombol selain spasi untuk MEMATIKAN fitur (Map Terms kembali jadi Terms)
-        dotAdded = false;
-        syncTermsText();
-        clearMarker();
-    }
+    try {
+        const key = e.key ? e.key.toLowerCase() : "";
+        if (key === "g") {
+            dotAdded = true;
+            syncTermsText();
+        } else if (key !== " " && !isRightMouseDown) {
+            dotAdded = false;
+            syncTermsText();
+            clearMarker();
+        }
+    } catch (_) {}
 });
 
 // =================== Party Modal Auto-Dismiss ===================
 function dismissPartyModalIfNeeded() {
-    const dialogs = document.querySelectorAll("[role='dialog'], [class*='modal'], [class*='dialog'], div[class*='overlay']");
-    for (const dialog of dialogs) {
-        const text = dialog.textContent || "";
-        if (text.includes("Leave the party page") || text.includes("Leave the party?")) {
-            const buttons = dialog.querySelectorAll("button");
-            for (const btn of buttons) {
-                const btnText = btn.textContent.trim().toLowerCase();
-                if (btnText.includes("cancel") || btnText.includes("stay") || btnText.includes("no") || btnText.includes("batal") || btnText.includes("close")) {
-                    btn.click();
-                    break;
+    try {
+        const dialogs = document.querySelectorAll("[role='dialog'], [class*='modal'], [class*='dialog'], div[class*='overlay']");
+        for (const dialog of dialogs) {
+            const text = dialog.textContent || "";
+            if (text.includes("Leave the party page") || text.includes("Leave the party?")) {
+                const buttons = dialog.querySelectorAll("button");
+                for (const btn of buttons) {
+                    const btnText = btn.textContent.trim().toLowerCase();
+                    if (btnText.includes("cancel") || btnText.includes("stay") || btnText.includes("no") || btnText.includes("batal") || btnText.includes("close")) {
+                        btn.click();
+                        break;
+                    }
                 }
             }
         }
-    }
+    } catch (_) {}
 }
 
-// =================== Background Handlers ===================
+// =================== Background Interval (Bulletproof) ===================
 setInterval(() => {
-    if (!isMapValid(foundMap)) {
-        scanForMap();
-    }
-    syncTermsText();
-    dismissPartyModalIfNeeded();
+    try {
+        hookGoogleMapConstructor();
+        checkPanoramaFailure();
+        if (!isMapValid(foundMap)) {
+            requestScanForMap(100);
+        }
+        syncTermsText();
+        dismissPartyModalIfNeeded();
+    } catch (_) {}
 }, 1000);
