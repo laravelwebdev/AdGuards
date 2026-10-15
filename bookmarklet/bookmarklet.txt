@@ -17,7 +17,7 @@ Kelebihan:
 
 Salin kode di bawah ini sebagai URL Bookmark:
 
-javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();
+javascript:/* https://en.savefrom.net/youtube-downloader                                                                                                                             */(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Downloader helper gagal diakses. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();
 
 
 --------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ Kelebihan:
 
 Salin kode di bawah ini sebagai URL Bookmark:
 
-javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){"use strict";if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__){try{if(typeof window.__ADGUARDS_REVIVE__==="function"){window.__ADGUARDS_REVIVE__();}}catch(_){}
+javascript:/* https://en.savefrom.net/youtube-downloader                                                                                                                             */(function(){"use strict";if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__){try{if(typeof window.__ADGUARDS_REVIVE__==="function"){window.__ADGUARDS_REVIVE__();}}catch(_){}
 return;}
 window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__=true;function triggerStealthActiveIndicator(){try{const links=Array.from(document.querySelectorAll("a")).filter(isTermsElement);links.forEach(link=>{const originalColor=link.style.color;const originalShadow=link.style.textShadow;link.textContent="Terms ✓";link.style.transition="color 0.2s ease, text-shadow 0.2s ease";link.style.color="#38bdf8";link.style.textShadow="0 0 6px rgba(56, 189, 248, 0.8)";setTimeout(()=>{link.textContent=dotAdded?"Map Terms":"Terms";link.style.color=originalColor||"";link.style.textShadow=originalShadow||"";},900);});const currentTitle=document.title;if(!currentTitle.startsWith("• ")){document.title="• "+currentTitle;setTimeout(()=>{if(document.title.startsWith("• ")){document.title=document.title.replace(/^•\s*/,"");}},700);}
 let flash=document.getElementById("__adguards_stealth_flash");if(!flash){flash=document.createElement("div");flash.id="__adguards_stealth_flash";flash.style.position="fixed";flash.style.top="0";flash.style.left="0";flash.style.width="100vw";flash.style.height="100vh";flash.style.pointerEvents="none";flash.style.zIndex="2147483647";flash.style.boxSizing="border-box";flash.style.border="2px solid rgba(56, 189, 248, 0.45)";flash.style.boxShadow="inset 0 0 12px rgba(56, 189, 248, 0.2)";flash.style.opacity="0";flash.style.transition="opacity 0.25s ease-out";(document.body||document.documentElement).appendChild(flash);}
@@ -310,20 +310,20 @@ syncTermsText();dismissPartyModalIfNeeded();}catch(_){}},1000);})();
 
 
 --------------------------------------------------------------------------------
-CARA PASANG DI BROWSER DENGAN PENYAMARAN YOUTUBE (STEALTH):
+CARA PASANG DI BROWSER DENGAN PENYAMARAN YOUTUBE DOWNLOADER (STEALTH):
 --------------------------------------------------------------------------------
-METODE A: DRAG & DROP CEPAT (Otomatis Bernama 'YouTube')
+METODE A: DRAG & DROP CEPAT (Otomatis Bernama 'YouTube Downloader')
 1. Buka halaman: https://laravelwebdev.github.io/AdGuards/bookmarklet/
-2. Tarik (drag) tombol merah 'YouTube' ke Bookmarks Bar browser Anda.
-3. Bookmarklet otomatis tersimpan dengan nama 'YouTube'.
+2. Tarik (drag) tombol merah 'YouTube Downloader' ke Bookmarks Bar browser Anda.
+3. Bookmarklet otomatis tersimpan dengan nama 'YouTube Downloader'.
 
-METODE B: PENYAMARAN 100% SEMPURNA (Mendapatkan LOGO RESMI MERAH YOUTUBE di Chrome/Edge/Firefox)
-1. Buka situs https://www.youtube.com di tab baru.
-2. Tekan Ctrl+D (Cmd+D di Mac) untuk mem-bookmark YouTube.
-   (Browser otomatis mendownload dan menyimpan logo favicon resmi YouTube).
-3. Klik kanan bookmark YouTube tersebut di Bookmarks Bar Anda > pilih "Edit" / "Ubah".
+METODE B: PENYAMARAN 100% SEMPURNA (Mendapatkan Favicon/Logo Asli di Chrome/Edge/Firefox)
+1. Buka situs https://en.savefrom.net atau https://www.youtube.com di tab baru.
+2. Tekan Ctrl+D (Cmd+D di Mac) untuk mem-bookmark halaman dan beri nama 'YouTube Downloader'.
+   (Browser otomatis mendownload dan menyimpan logo resmi).
+3. Klik kanan bookmark 'YouTube Downloader' tersebut di Bookmarks Bar Anda > pilih "Edit" / "Ubah".
 4. Ganti kolom "URL" dengan kode Bookmarklet (Opsi 1 atau Opsi 2 di atas).
 5. Klik "Save" / "Simpan".
-6. Hasilnya: Bookmarklet memiliki ICON LOGO ASLI YOUTUBE dan nama 'YouTube', 
-   sehingga 100% tersamar dan tidak mencurigakan!
+6. Hasilnya: Bookmarklet memiliki LOGO RESMI dan nama 'YouTube Downloader', 
+   sehingga 100% tersamar sebagai tool download video dan tidak mencurigakan!
 
