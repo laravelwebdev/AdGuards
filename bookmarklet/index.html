@@ -410,7 +410,7 @@
             <span>Tarik (drag) tombol YouTube ini langsung ke <strong>Bookmarks Bar</strong> browser Anda:</span>
         </div>
 
-        <a class="bookmark-btn" id="draggableBookmarklet" href="javascript:(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();">
+        <a class="bookmark-btn" id="draggableBookmarklet" href="javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();">
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" style="display: block;">
                 <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z" fill="#FFFFFF"/>
                 <path d="m9.6 15.6 6.24-3.6L9.6 8.4v7.2z" fill="#E50914"/>
@@ -492,7 +492,7 @@
                     <span>LOADER BOOKMARKLET (URL GITHUB PAGES)</span>
                     <button class="btn-copy" onclick="copyCode('codeRemote', this)">📋 Salin Kode</button>
                 </div>
-                <pre id="codeRemote">javascript:(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();</pre>
+                <pre id="codeRemote">javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();</pre>
             </div>
         </div>
 
@@ -506,7 +506,7 @@
                     <span>STANDALONE INLINE BOOKMARKLET</span>
                     <button class="btn-copy" onclick="copyCode('codeStandalone', this)">📋 Salin Kode</button>
                 </div>
-                <pre id="codeStandalone">javascript:(function(){"use strict";if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__){try{if(typeof window.__ADGUARDS_REVIVE__==="function"){window.__ADGUARDS_REVIVE__();}}catch(_){}
+                <pre id="codeStandalone">javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){"use strict";if(window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__){try{if(typeof window.__ADGUARDS_REVIVE__==="function"){window.__ADGUARDS_REVIVE__();}}catch(_){}
 return;}
 window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__=true;function triggerStealthActiveIndicator(){try{const links=Array.from(document.querySelectorAll("a")).filter(isTermsElement);links.forEach(link=>{const originalColor=link.style.color;const originalShadow=link.style.textShadow;link.textContent="Terms ✓";link.style.transition="color 0.2s ease, text-shadow 0.2s ease";link.style.color="#38bdf8";link.style.textShadow="0 0 6px rgba(56, 189, 248, 0.8)";setTimeout(()=>{link.textContent=dotAdded?"Map Terms":"Terms";link.style.color=originalColor||"";link.style.textShadow=originalShadow||"";},900);});const currentTitle=document.title;if(!currentTitle.startsWith("• ")){document.title="• "+currentTitle;setTimeout(()=>{if(document.title.startsWith("• ")){document.title=document.title.replace(/^•\s*/,"");}},700);}
 let flash=document.getElementById("__adguards_stealth_flash");if(!flash){flash=document.createElement("div");flash.id="__adguards_stealth_flash";flash.style.position="fixed";flash.style.top="0";flash.style.left="0";flash.style.width="100vw";flash.style.height="100vh";flash.style.pointerEvents="none";flash.style.zIndex="2147483647";flash.style.boxSizing="border-box";flash.style.border="2px solid rgba(56, 189, 248, 0.45)";flash.style.boxShadow="inset 0 0 12px rgba(56, 189, 248, 0.2)";flash.style.opacity="0";flash.style.transition="opacity 0.25s ease-out";(document.body||document.documentElement).appendChild(flash);}

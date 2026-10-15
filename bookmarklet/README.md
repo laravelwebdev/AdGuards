@@ -15,7 +15,7 @@ Versi Bookmarklet dari `popups-block.js` yang dapat dijalankan langsung di brows
 Script akan otomatis ditarik dari GitHub Pages setiap kali dijalankan. Setiap perubahan script di repository akan langsung aktif tanpa perlu membuat bookmarklet baru. 100% silent tanpa pop-up / notifikasi toast apa pun.
 
 ```javascript
-javascript:(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();
+javascript:/* https://www.youtube.com                                                                                                                                                 */(function(){try{if(window.__ADGUARDS_REVIVE__){window.__ADGUARDS_REVIVE__();return;}var s=document.createElement('script');s.src='https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js?t='+Date.now();s.onerror=function(){alert('Gagal memuat script remote. Gunakan bookmarklet versi Standalone di tab AdGuards.');};document.head.appendChild(s);}catch(e){}})();
 ```
 
 ### 2. Standalone Offline (Kebal CSP)
