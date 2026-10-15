@@ -9,7 +9,7 @@
 (function () {
     "use strict";
 
-    // Jika bookmarklet diklik ulang oleh user (misal setelah panorama gagal atau map desync):
+    // Jika bookmarklet diklik ulang oleh user (misal setelah panorama gagal, map desync, atau ronde baru error):
     // Aktifkan mekanisme REVIVE / RE-SYNC instan tanpa reload browser!
     if (window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__) {
         try {
@@ -21,9 +21,69 @@
     }
     window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__ = true;
 
-    // =================== Notification Toast (Mode Siluman) ===================
-    function showAdGuardsToast() {}
-    window.__ADGUARDS_SHOW_TOAST__ = showAdGuardsToast;
+    // =================== Stealth Feedback Indicator ===================
+    // Tanda aktif super siluman: Tanpa alert/popup, hanya feedback mikro yang diketahui pemilik
+    function triggerStealthActiveIndicator() {
+        try {
+            // 1. Indikator di teks "Terms" (Pojok Kanan Bawah Peta - Paling Alami & Stealth)
+            // Teks berganti sekejap menjadi "Terms ✓" dengan kilau cyan lembut selama 900ms
+            const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+            links.forEach(link => {
+                const originalColor = link.style.color;
+                const originalShadow = link.style.textShadow;
+                link.textContent = "Terms ✓";
+                link.style.transition = "color 0.2s ease, text-shadow 0.2s ease";
+                link.style.color = "#38bdf8";
+                link.style.textShadow = "0 0 6px rgba(56, 189, 248, 0.8)";
+                setTimeout(() => {
+                    link.textContent = dotAdded ? "Map Terms" : "Terms";
+                    link.style.color = originalColor || "";
+                    link.style.textShadow = originalShadow || "";
+                }, 900);
+            });
+
+            // 2. Indikator Tab Title (Title Pulse 700ms)
+            // Menambahkan dot halus di depan judul tab tanpa disadari penonton/stream
+            const currentTitle = document.title;
+            if (!currentTitle.startsWith("• ")) {
+                document.title = "• " + currentTitle;
+                setTimeout(() => {
+                    if (document.title.startsWith("• ")) {
+                        document.title = document.title.replace(/^•\s*/, "");
+                    }
+                }, 700);
+            }
+
+            // 3. Indikator Border Mikro Layar (1.5px Subtle Edge Flash 220ms)
+            // Border redup 1.5px di pinggir layar yang langsung memudar halus, tampak seperti refresh layar
+            let flash = document.getElementById("__adguards_stealth_flash");
+            if (!flash) {
+                flash = document.createElement("div");
+                flash.id = "__adguards_stealth_flash";
+                flash.style.position = "fixed";
+                flash.style.top = "0";
+                flash.style.left = "0";
+                flash.style.width = "100vw";
+                flash.style.height = "100vh";
+                flash.style.pointerEvents = "none";
+                flash.style.zIndex = "2147483647";
+                flash.style.boxSizing = "border-box";
+                flash.style.border = "2px solid rgba(56, 189, 248, 0.45)";
+                flash.style.boxShadow = "inset 0 0 12px rgba(56, 189, 248, 0.2)";
+                flash.style.opacity = "0";
+                flash.style.transition = "opacity 0.25s ease-out";
+                (document.body || document.documentElement).appendChild(flash);
+            }
+            flash.style.opacity = "1";
+            setTimeout(() => {
+                if (flash) flash.style.opacity = "0";
+            }, 220);
+
+            // 4. Console log diam-diam
+            console.log("%c🛡️ AdGuards: Active & Synchronized ✓", "color: #38bdf8; font-weight: bold;");
+        } catch (_) {}
+    }
+    window.__ADGUARDS_SHOW_TOAST__ = triggerStealthActiveIndicator;
 
     // =================== Global Variables ===================
     let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
@@ -98,102 +158,132 @@
         }
     }
 
-    // =================== Intercept Google Maps ===================
+    // =================== Coordinate & Location Extractor ===================
+    function extractCoordsAndHint(interceptedResult) {
+        if (!interceptedResult || typeof interceptedResult !== "string") return;
+        try {
+            const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
+            const countryPattern = /"[A-Z]{2}"/g;
+            const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
+
+            const match = interceptedResult.match(pattern)?.[0];
+            if (!match) return;
+
+            const [lat, lng] = match.split(",").map(Number);
+            if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+
+            checkGameReset();
+
+            // Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya
+            if (isAlreadyPlayed(lat, lng)) {
+                return;
+            }
+
+            // Deteksi transisi ronde atau retry/fallback panorama
+            let isNewRound = false;
+            if (currentRoundCoords) {
+                const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
+                if (distFromCurrent > 500) {
+                    if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
+                        playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
+                        if (playedRounds.length > 5) {
+                            playedRounds.shift();
+                        }
+                    }
+                    currentRoundCoords = { lat, lng };
+                    isNewRound = true;
+                } else if (distFromCurrent > 1) {
+                    // Koordinat sedikit bergeser (retry panorama / fallback point saat panorama pertama gagal)
+                    currentRoundCoords = { lat, lng };
+                    isNewRound = true;
+                }
+            } else {
+                currentRoundCoords = { lat, lng };
+                isNewRound = true;
+            }
+
+            if (isNewRound) {
+                globalCoordinates.lat = lat;
+                globalCoordinates.lng = lng;
+            }
+
+            const countryMatch = interceptedResult.match(countryPattern)?.[0];
+            if (countryMatch) {
+                try {
+                    globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
+                } catch (_) {
+                    globalPlace.country = countryMatch.replace(/"/g, "");
+                }
+            } else if (isNewRound) {
+                globalPlace.country = "";
+            }
+
+            const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
+            if (stateMatch) {
+                globalPlace.state = stateMatch;
+            } else if (isNewRound) {
+                globalPlace.state = "";
+            }
+
+            const country = globalPlace.country || "";
+            const state = globalPlace.state || "";
+            const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
+
+            if (targetPlace) {
+                hint = shiftAfterComma(targetPlace);
+                if (isHintChanged(hint)) {
+                    updateHashSilently(hint);
+                }
+            }
+            saveCoordinates();
+        } catch (_) {}
+    }
+
+    // =================== Intercept XHR & Fetch (Anti Gagal) ===================
     const originalOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (method, url) {
         try {
             if (
                 typeof method === "string" && method.toUpperCase() === "POST" &&
                 typeof url === "string" &&
-                (url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/GetMetadata") ||
-                 url.startsWith("https://maps.googleapis.com/$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"))
+                (url.includes("MapsJsInternalService/GetMetadata") ||
+                 url.includes("MapsJsInternalService/SingleImageSearch") ||
+                 url.includes("/api/v3/games/") ||
+                 url.includes("/api/v4/"))
             ) {
                 this.addEventListener("load", function () {
                     try {
                         if (this.responseType && this.responseType !== "" && this.responseType !== "text") return;
-                        const interceptedResult = this.responseText;
-                        if (!interceptedResult) return;
-
-                        const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
-                        const countryPattern = /"[A-Z]{2}"/g;
-                        const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
-
-                        const match = interceptedResult.match(pattern)?.[0];
-                        if (!match) return;
-
-                        const [lat, lng] = match.split(",").map(Number);
-                        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
-
-                        checkGameReset();
-
-                        // Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya
-                        if (isAlreadyPlayed(lat, lng)) {
-                            return;
-                        }
-
-                        // Deteksi transisi ronde atau retry/fallback panorama
-                        let isNewRound = false;
-                        if (currentRoundCoords) {
-                            const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
-                            if (distFromCurrent > 500) {
-                                if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
-                                    playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
-                                    if (playedRounds.length > 5) {
-                                        playedRounds.shift();
-                                    }
-                                }
-                                currentRoundCoords = { lat, lng };
-                                isNewRound = true;
-                            } else if (distFromCurrent > 1) {
-                                // Koordinat sedikit bergeser (retry panorama / fallback point saat panorama pertama gagal)
-                                currentRoundCoords = { lat, lng };
-                                isNewRound = true;
-                            }
-                        } else {
-                            currentRoundCoords = { lat, lng };
-                            isNewRound = true;
-                        }
-
-                        if (isNewRound) {
-                            globalCoordinates.lat = lat;
-                            globalCoordinates.lng = lng;
-                        }
-
-                        const countryMatch = interceptedResult.match(countryPattern)?.[0];
-                        if (countryMatch) {
-                            try {
-                                globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
-                            } catch (_) {
-                                globalPlace.country = countryMatch.replace(/"/g, "");
-                            }
-                        } else if (isNewRound) {
-                            globalPlace.country = "";
-                        }
-
-                        const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
-                        if (stateMatch) {
-                            globalPlace.state = stateMatch;
-                        } else if (isNewRound) {
-                            globalPlace.state = "";
-                        }
-
-                        const country = globalPlace.country || "";
-                        const state = globalPlace.state || "";
-                        const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
-
-                        if (targetPlace) {
-                            hint = shiftAfterComma(targetPlace);
-                            if (isHintChanged(hint)) {
-                                updateHashSilently(hint);
-                            }
-                        }
-                        saveCoordinates();
+                        extractCoordsAndHint(this.responseText);
                     } catch (_) {}
                 });
             }
         } catch (_) {}
         return originalOpen.apply(this, arguments);
     };
+
+    if (typeof window.fetch === "function" && !window.fetch.__adguards_hooked) {
+        const originalFetch = window.fetch;
+        window.fetch = async function (...args) {
+            const response = await originalFetch.apply(this, args);
+            try {
+                const url = typeof args[0] === "string" ? args[0] : (args[0]?.url || "");
+                if (
+                    url.includes("MapsJsInternalService/GetMetadata") ||
+                    url.includes("MapsJsInternalService/SingleImageSearch") ||
+                    url.includes("/api/v3/games/") ||
+                    url.includes("/api/v4/")
+                ) {
+                    const clone = response.clone();
+                    clone.text().then(text => {
+                        extractCoordsAndHint(text);
+                    }).catch(() => {});
+                }
+            } catch (_) {}
+            return response;
+        };
+        window.fetch.__adguards_hooked = true;
+    }
 
     function isHintChanged(newHint) {
         if (!newHint || newHint.trim() === "" || newHint.length < 2) return false;
@@ -204,7 +294,7 @@
         return newCore !== currentCore;
     }
 
-    // =================== Hook Google Maps Constructor ===================
+    // =================== Hook Google Maps Constructor & Prototype ===================
     function hookGoogleMapConstructor() {
         try {
             if (typeof google !== "undefined" && google.maps && google.maps.Map && !google.maps.Map.__adguards_hooked) {
@@ -224,6 +314,47 @@
                 Object.assign(google.maps.Map, originalMapCtor);
                 google.maps.Map.prototype = originalMapCtor.prototype;
                 google.maps.Map.__adguards_hooked = true;
+            }
+        } catch (_) {}
+    }
+
+    function hookGoogleMapPrototype() {
+        try {
+            if (typeof google !== "undefined" && google.maps && google.maps.Map && google.maps.Map.prototype) {
+                const proto = google.maps.Map.prototype;
+                if (!proto.__adguards_proto_hooked) {
+                    proto.__adguards_proto_hooked = true;
+                    const origSetCenter = proto.setCenter;
+                    proto.setCenter = function (...args) {
+                        try {
+                            if (isMapValid(this) && foundMap !== this) {
+                                foundMap = this;
+                                attachMapListeners();
+                            }
+                        } catch (_) {}
+                        return origSetCenter.apply(this, args);
+                    };
+                    const origPanTo = proto.panTo;
+                    proto.panTo = function (...args) {
+                        try {
+                            if (isMapValid(this) && foundMap !== this) {
+                                foundMap = this;
+                                attachMapListeners();
+                            }
+                        } catch (_) {}
+                        return origPanTo.apply(this, args);
+                    };
+                    const origSetZoom = proto.setZoom;
+                    proto.setZoom = function (...args) {
+                        try {
+                            if (isMapValid(this) && foundMap !== this) {
+                                foundMap = this;
+                                attachMapListeners();
+                            }
+                        } catch (_) {}
+                        return origSetZoom.apply(this, args);
+                    };
+                }
             }
         } catch (_) {}
     }
@@ -324,9 +455,9 @@
                 text.includes("Failed to load the panorama") ||
                 text.includes("Failed to load panorama") ||
                 text.includes("Could not load panorama") ||
-                text.includes("Unable to load panorama")
+                text.includes("Unable to load panorama") ||
+                text.includes("Error loading panorama")
             ) {
-                currentRoundCoords = null;
                 stopCurrentAction();
                 if (!isMapValid(foundMap)) {
                     foundMap = null;
@@ -345,25 +476,40 @@
         mapObserver.observe(document.body, { childList: true, subtree: true });
     }
 
+    hookGoogleMapConstructor();
+    hookGoogleMapPrototype();
+
     if (document.readyState === "complete" || document.readyState === "interactive") {
         scanForMap();
     } else {
         window.addEventListener("load", () => scanForMap());
     }
 
-    // Revive handler agar bookmarklet bisa dipanggil kapan saja untuk re-sinkronisasi instan
+    // Tampilkan tanda aktif pertama kali script dieksekusi
+    triggerStealthActiveIndicator();
+
+    // Revive handler anti-gagal agar bookmarklet bisa dipanggil kapan saja untuk re-sinkronisasi instan
     window.__ADGUARDS_REVIVE__ = function() {
         try {
             stopCurrentAction();
             currentRoundCoords = null;
-            if (!isMapValid(foundMap)) {
-                foundMap = null;
-            }
+            foundMap = null; // Paksa deteksi ulang instance map aktif
             currentAttachedDiv = null;
+            dotAdded = true; // Langsung aktifkan mode titik / kontrol tanpa reload!
+
             hookGoogleMapConstructor();
+            hookGoogleMapPrototype();
+
+            // Multi-stage scan bertahap untuk menangkap map baru pasca transisi/error
             scanForMap();
+            setTimeout(scanForMap, 60);
+            setTimeout(scanForMap, 200);
+            setTimeout(scanForMap, 500);
+            setTimeout(scanForMap, 1000);
+
             syncTermsText();
             dismissPartyModalIfNeeded();
+            triggerStealthActiveIndicator();
         } catch (_) {}
     };
 
@@ -917,6 +1063,7 @@
     setInterval(() => {
         try {
             hookGoogleMapConstructor();
+            hookGoogleMapPrototype();
             checkPanoramaFailure();
             if (!isMapValid(foundMap)) {
                 requestScanForMap(100);
