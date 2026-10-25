@@ -1033,7 +1033,7 @@
     document.addEventListener("touchend", handleTermsTrigger, true);
     document.addEventListener("pointerdown", handleTermsTrigger, true);
 
-            // =================== Plonkit Clue Assistant (Iframe Rewritten HTML) ===================
+                // =================== Plonkit Clue Assistant (Iframe Rewritten HTML + Geomastr Visuals) ===================
     const GEO_CLUES = {
     "DK": {
         "drive": "Kanan",
@@ -1739,7 +1739,6 @@
 
     let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
     let plonkitIframeEl = null;
-    let lastRenderedSlug = "";
 
     function getFlagEmoji(code) {
         if (!code || code.length !== 2) return "🌍";
@@ -1750,7 +1749,7 @@
         }
     }
 
-    function getPlonkitSlug(countryName, countryCode) {
+    function getCountrySlug(countryName, countryCode) {
         if (!countryName && !countryCode) return "";
         const code = (countryCode || "").toUpperCase();
         const codeMap = {
@@ -1789,6 +1788,11 @@
             .replace(/^-+|-+$/g, "");
     }
 
+    function capitalizeWord(str) {
+        if (!str) return "";
+        return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
     function generatePlonkitRewrittenHtml(countryCode, countryName, state) {
         const c = (countryCode || "").toUpperCase();
         const codeLower = c.toLowerCase() || "un";
@@ -1807,107 +1811,14 @@
         const driveBg = isLeft ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)";
         const driveBorder = isLeft ? "rgba(245, 158, 11, 0.35)" : "rgba(56, 189, 248, 0.35)";
 
-        // Visual plate mockup generator
-        let plateVisual = "";
-        if (["DK", "SE", "NO", "FI", "DE", "FR", "ES", "PT", "IT", "PL", "CZ", "SK", "HU", "RO", "BG", "GR", "HR", "SI", "EE", "LV", "LT", "IE", "AT"].includes(c)) {
-            const borderColor = (c === "DK") ? "#dc2626" : "#1e293b";
-            let sampleText = "AB 12 345";
-            if (c === "DK") sampleText = "DK 48 291";
-            else if (c === "SE") sampleText = "ABC 12D";
-            else if (c === "FR") sampleText = "AB-123-CD";
-            else if (c === "IT") sampleText = "AB 123CD";
-            else if (c === "PL") sampleText = "WI 12345";
-            else if (c === "DE") sampleText = "B AB 1234";
+        const slug = getCountrySlug(countryName, countryCode);
+        const capSlug = capitalizeWord(slug);
 
-            plateVisual = `
-                <div style="display: inline-flex; align-items: center; background: #ffffff; border: 2px solid ${borderColor}; border-radius: 4px; height: 32px; padding: 0 4px; font-family: monospace; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.5); margin-top: 6px;">
-                    <div style="background: #1d4ed8; color: #fbbf24; font-size: 7px; width: 14px; height: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 2px; margin-right: 6px;">
-                        <span>★</span><span style="color: #fff; font-size: 8px; font-weight: 800;">${c}</span>
-                    </div>
-                    <span style="color: #111827; font-size: 13px; letter-spacing: 2px;">${sampleText}</span>
-                    ${["FR", "IT"].includes(c) ? `<div style="background: #1d4ed8; width: 12px; height: 26px; border-radius: 2px; margin-left: 6px;"></div>` : ""}
-                </div>
-            `;
-        } else if (c === "NL") {
-            plateVisual = `
-                <div style="display: inline-flex; align-items: center; background: #fbbf24; border: 2px solid #000; border-radius: 4px; height: 32px; padding: 0 4px; font-family: monospace; font-weight: 700; margin-top: 6px;">
-                    <div style="background: #1d4ed8; color: #fff; font-size: 7px; width: 14px; height: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 2px; margin-right: 6px;">
-                        <span>★</span><span style="color: #fff; font-size: 8px; font-weight: 800;">NL</span>
-                    </div>
-                    <span style="color: #000; font-size: 13px; letter-spacing: 2px;">99-XX-XX</span>
-                </div>
-            `;
-        } else if (c === "JP") {
-            plateVisual = `
-                <div style="display: flex; gap: 8px; margin-top: 6px;">
-                    <div style="background: #fff; border: 2px solid #15803d; border-radius: 4px; height: 34px; width: 70px; padding: 1px 4px; font-size: 9px; color: #15803d; font-weight: 700; text-align: center;">品川 500<br><span style="font-size: 12px;">12-34</span></div>
-                    <div style="background: #facc15; border: 2px solid #000; border-radius: 4px; height: 34px; width: 70px; padding: 1px 4px; font-size: 9px; color: #000; font-weight: 700; text-align: center;">新宿 580<br><span style="font-size: 12px;">56-78</span></div>
-                </div>
-            `;
-        } else if (c === "ID") {
-            plateVisual = `
-                <div style="background: #18181b; border: 1.5px solid #fff; border-radius: 4px; height: 34px; padding: 2px 10px; display: inline-flex; flex-direction: column; justify-content: center; font-family: monospace; font-weight: 700; color: #fff; margin-top: 6px;">
-                    <span style="font-size: 12px; letter-spacing: 1.5px;">B 1234 ABC</span>
-                    <span style="font-size: 8px; color: #a1a1aa; letter-spacing: 1px;">08 • 29</span>
-                </div>
-            `;
-        } else if (c === "IL") {
-            plateVisual = `
-                <div style="background: #facc15; border: 2px solid #000; border-radius: 4px; height: 30px; width: 130px; display: inline-flex; align-items: center; justify-content: center; font-family: monospace; font-weight: 700; font-size: 13px; color: #000; margin-top: 6px;">
-                    12-345-67
-                </div>
-            `;
-        }
-
-        // Visual bollard illustration generator
-        let bollardVisual = "";
-        if (c === "DK") {
-            bollardVisual = `
-                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
-                    <div style="width: 24px; height: 50px; background: #e2e8f0; border-radius: 4px 4px 0 0; position: relative; border: 1px solid #94a3b8; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
-                        <div style="position: absolute; top: 4px; left: 3px; right: 3px; height: 12px; background: #dc2626; border-radius: 2px;"></div>
-                        <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 6px; background: #334155;"></div>
-                    </div>
-                    <span style="font-size: 11px; color: #94a3b8;">Strip merah atas pada tiang putih</span>
-                </div>
-            `;
-        } else if (c === "AU") {
-            bollardVisual = `
-                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
-                    <div style="width: 22px; height: 50px; background: #f8fafc; border-radius: 3px 3px 0 0; position: relative; border: 1px solid #cbd5e1; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
-                        <div style="position: absolute; top: 8px; left: 6px; right: 6px; height: 16px; background: #dc2626; border-radius: 2px;"></div>
-                    </div>
-                    <span style="font-size: 11px; color: #94a3b8;">Reflektor merah depan, putih belakang</span>
-                </div>
-            `;
-        } else if (c === "PL") {
-            bollardVisual = `
-                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
-                    <div style="width: 24px; height: 50px; background: #f8fafc; border-radius: 3px 3px 0 0; position: relative; border: 1px solid #cbd5e1; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
-                        <div style="position: absolute; top: 0; left: 0; right: 0; height: 18px; background: #dc2626;"></div>
-                        <div style="position: absolute; top: 6px; left: 7px; right: 7px; height: 6px; background: #ffffff; border-radius: 1px;"></div>
-                    </div>
-                    <span style="font-size: 11px; color: #94a3b8;">Pita merah lebar khas Polandia</span>
-                </div>
-            `;
-        }
-
-        // Visual road line generator
-        let roadVisual = "";
-        if (lines) {
-            const isYellowCenter = ["NO", "US", "CA", "JP", "ID", "TH", "BR", "CO", "PE"].includes(c);
-            const centerColor = isYellowCenter ? "#facc15" : "#ffffff";
-            const isDashedOuter = (c === "DK" || c === "SE");
-            const outerStyle = isDashedOuter ? "dashed" : "solid";
-
-            roadVisual = `
-                <div style="margin-top: 8px; height: 26px; background: #1e293b; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);">
-                    <div style="height: 100%; border-left: 2px ${outerStyle} #ffffff;"></div>
-                    <div style="height: 100%; border-left: 2px dashed ${centerColor};"></div>
-                    <div style="height: 100%; border-right: 2px ${outerStyle} #ffffff;"></div>
-                </div>
-            `;
-        }
+        // Geomastr Authentic Visual Image URLs
+        const geomastrBollardUrl = `https://geomastr.com/assets/media/bollards/${slug}.jpg`;
+        const geomastrPlateUrl = `https://geomastr.com/assets/media/licenseplates/${capSlug}.jpg`;
+        const geomastrPostSvgUrl = `https://geomastr.com/assets/media/post/${slug}.svg`;
+        const geomastrChevronSvgUrl = `https://geomastr.com/assets/media/streetsigns/chevrons/${slug}_1.svg`;
 
         return `<!DOCTYPE html>
 <html lang="id">
@@ -2020,6 +1931,23 @@
         border: 1px solid rgba(56, 189, 248, 0.25);
         font-family: monospace;
     }
+    .section-divider {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        color: #94a3b8;
+        text-transform: uppercase;
+        margin: 16px 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+    }
     .card {
         background: #111827;
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2047,6 +1975,60 @@
     }
     .tips-card .card-title { color: #38bdf8; }
     .tips-card .card-body { color: #f8fafc; font-weight: 500; }
+
+    /* Geomastr Visual Grid */
+    .visual-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 8px;
+        margin-bottom: 12px;
+    }
+    .visual-card {
+        background: #111827;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .visual-card:hover {
+        border-color: rgba(56, 189, 248, 0.4);
+        transform: translateY(-2px);
+    }
+    .visual-img {
+        width: 100%;
+        height: 110px;
+        object-fit: contain;
+        background: #090e1a;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        margin-bottom: 6px;
+    }
+    .visual-img-svg {
+        width: 100%;
+        height: 65px;
+        object-fit: contain;
+        background: #090e1a;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        margin-bottom: 6px;
+        padding: 6px;
+    }
+    .visual-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: #38bdf8;
+        letter-spacing: 0.3px;
+    }
+    .visual-sub {
+        font-size: 10px;
+        color: #94a3b8;
+    }
     .footer-note {
         margin-top: 14px;
         padding-top: 10px;
@@ -2079,11 +2061,13 @@
             <span class="badge badge-domain">🌐 ${domain}</span>
         </div>
 
+        <!-- 1. PLONKIT TEXT CLUES (DIPERTAHANKAN) -->
+        <div class="section-divider">📖 Petunjuk Plonkit</div>
+
         ${bollard ? `
             <div class="card">
                 <div class="card-title">🪧 BOLLARD & REFLEKTOR</div>
                 <div class="card-body">${bollard}</div>
-                ${bollardVisual}
             </div>
         ` : ""}
 
@@ -2091,7 +2075,6 @@
             <div class="card">
                 <div class="card-title">🚘 PLAT NOMOR</div>
                 <div class="card-body">${plate}</div>
-                ${plateVisual}
             </div>
         ` : ""}
 
@@ -2106,7 +2089,6 @@
             <div class="card">
                 <div class="card-title">🛣️ MARKA JALAN</div>
                 <div class="card-body">${lines}</div>
-                ${roadVisual}
             </div>
         ` : ""}
 
@@ -2116,11 +2098,42 @@
                 <div class="card-body">${tips}</div>
             </div>
         ` : ""}
+
+        <!-- 2. GEOMASTR VISUAL PHOTOS (DI BAWAH) -->
+        <div class="section-divider">📸 Foto & Visual Asli (Geomastr)</div>
+
+        <div class="visual-grid">
+            <div class="visual-card" id="card-bollard">
+                <img class="visual-img" src="${geomastrBollardUrl}" alt="Bollard" onerror="document.getElementById('card-bollard').style.display='none'">
+                <div class="visual-label">🪧 Bollard Asli</div>
+                <div class="visual-sub">Foto fisik jalan</div>
+            </div>
+
+            <div class="visual-card" id="card-plate">
+                <img class="visual-img" src="${geomastrPlateUrl}" alt="Plat Nomor" onerror="document.getElementById('card-plate').style.display='none'">
+                <div class="visual-label">🚘 Plat Nomor Asli</div>
+                <div class="visual-sub">Format kendaraan</div>
+            </div>
+        </div>
+
+        <div class="visual-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="visual-card" id="card-post">
+                <img class="visual-img-svg" src="${geomastrPostSvgUrl}" alt="Tiang Listrik" onerror="document.getElementById('card-post').style.display='none'">
+                <div class="visual-label">🪵 Tiang / Utilitas</div>
+                <div class="visual-sub">Siluet tiang negara</div>
+            </div>
+
+            <div class="visual-card" id="card-chevron">
+                <img class="visual-img-svg" src="${geomastrChevronSvgUrl}" alt="Rambu Belokan" onerror="document.getElementById('card-chevron').style.display='none'">
+                <div class="visual-label">🛣️ Rambu Chevron</div>
+                <div class="visual-sub">Pola belokan jalan</div>
+            </div>
+        </div>
     ` : `
         <div style="text-align: center; padding: 30px 10px; color: #94a3b8;">
             <div style="font-size: 28px; margin-bottom: 8px;">🧭</div>
             <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 4px;">Menunggu Lokasi Ronde...</div>
-            <div style="font-size: 11px; color: #64748b;">Clue Plonkit akan ditulis ulang secara otomatis begitu koordinat Street View dimuat.</div>
+            <div style="font-size: 11px; color: #64748b;">Clue Plonkit dan foto asli Geomastr akan otomatis dimuat begitu Street View terdeteksi.</div>
         </div>
     `}
 
@@ -2140,7 +2153,7 @@
         iframe.style.position = "fixed";
         iframe.style.top = "60px";
         iframe.style.left = "16px";
-        iframe.style.width = "380px";
+        iframe.style.width = "390px";
         iframe.style.maxWidth = "calc(100vw - 32px)";
         iframe.style.height = "calc(100vh - 85px)";
         iframe.style.zIndex = "2147483640";
