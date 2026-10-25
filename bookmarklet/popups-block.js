@@ -88,6 +88,8 @@
     // =================== Global Variables ===================
     let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
     let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "", countryCode: "" };
+    let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
+    let plonkitIframeEl = null;
     let currentPanoId = "";
     let activeStreetViewPanorama = null;
     let lastRenderedRoundCoords = null;
@@ -631,26 +633,42 @@
 
             if (targetEl !== currentAttachedDiv) {
                 if (currentAttachedDiv) {
+                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
                     currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
+                    currentAttachedDiv.removeEventListener("mousedown", handleMouseDown, true);
                     currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
+                    currentAttachedDiv.removeEventListener("mouseup", handleMouseUp, true);
                     currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
                     currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
+                    currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu, true);
                     currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+                    if (currentAttachedDiv.parentElement) {
+                        currentAttachedDiv.parentElement.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
+                    }
                 }
                 currentAttachedDiv = targetEl;
             }
 
+            targetEl.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
             targetEl.removeEventListener("wheel", handleWheelZoom);
+            targetEl.removeEventListener("mousedown", handleMouseDown, true);
             targetEl.removeEventListener("mousedown", handleMouseDown);
+            targetEl.removeEventListener("mouseup", handleMouseUp, true);
             targetEl.removeEventListener("mouseup", handleMouseUp);
             targetEl.removeEventListener("mouseleave", handleMouseLeave);
+            targetEl.removeEventListener("contextmenu", handleContextMenu, true);
             targetEl.removeEventListener("contextmenu", handleContextMenu);
 
-            targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
-            targetEl.addEventListener("mousedown", handleMouseDown);
-            targetEl.addEventListener("mouseup", handleMouseUp);
+            targetEl.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
+            targetEl.addEventListener("mousedown", handleMouseDown, true);
+            targetEl.addEventListener("mouseup", handleMouseUp, true);
             targetEl.addEventListener("mouseleave", handleMouseLeave);
-            targetEl.addEventListener("contextmenu", handleContextMenu);
+            targetEl.addEventListener("contextmenu", handleContextMenu, true);
+
+            if (targetEl.parentElement) {
+                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
+                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
+            }
         } catch (_) {}
     }
 
@@ -802,7 +820,7 @@
     function handleWheelZoom(e) {
         try {
             if (!isMapValid(foundMap) || !dotAdded) return;
-            if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
+            if (globalCoordinates && globalCoordinates.lat && globalCoordinates.lng) {
                 e.preventDefault();
                 e.stopPropagation();
                 stopCurrentAction();
@@ -2062,6 +2080,13 @@
                 openLightbox(t.src, t.alt || t.title || 'Geomastr Image');
             }
         });
+        document.addEventListener('keydown', function(e) {
+            var k = e.key ? e.key.toLowerCase() : '';
+            if (k === 'h' || k === 'escape') {
+                e.preventDefault();
+                window.parent.postMessage({ type: 'ADGUARDS_CLOSE_IFRAME' }, '*');
+            }
+        });
     </script>
 </body>
 </html>`;
@@ -2153,7 +2178,7 @@
 
 
         // =================== Keyboard Listener (Shortcut G & H) ===================
-    document.addEventListener("keydown", (e) => {
+    function handleGlobalKeyDown(e) {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
             if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
@@ -2161,6 +2186,8 @@
             }
             const key = e.key ? e.key.toLowerCase() : "";
             if (key === "h") {
+                e.preventDefault();
+                e.stopPropagation();
                 togglePlonkitPanel();
             } else if (key === "g") {
                 dotAdded = true;
@@ -2171,7 +2198,10 @@
                 clearMarker();
             }
         } catch (_) {}
-    });
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    document.addEventListener("keydown", handleGlobalKeyDown, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
