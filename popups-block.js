@@ -622,78 +622,7 @@
     };
 
     // =================== Event Listeners Rebind Management ===================
-    let touchTimer = null;
-    let touchStartPos = { x: 0, y: 0 };
-    let isTouching = false;
-    let lastTouchEndTime = 0;
-
-    function handleMapTouchStart(e) {
-        try {
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-                if (!isMapValid(foundMap)) return;
-            }
-            if (!dotAdded) return;
-            if (e.touches && e.touches.length > 1) {
-                if (touchTimer) clearTimeout(touchTimer);
-                return;
-            }
-
-            const touch = e.touches[0];
-            touchStartPos = { x: touch.clientX, y: touch.clientY };
-            isTouching = true;
-
-            const now = Date.now();
-            if (now - lastTouchEndTime < 300) {
-                if (touchTimer) clearTimeout(touchTimer);
-                lastTouchEndTime = 0;
-                if (globalCoordinates.lat && globalCoordinates.lng) {
-                    humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
-                }
-                return;
-            }
-
-            if (touchTimer) clearTimeout(touchTimer);
-            touchTimer = setTimeout(() => {
-                if (isTouching && dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
-                    isRightMouseDown = true;
-                    showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
-                }
-            }, 350);
-        } catch (_) {}
-    }
-
-    function handleMapTouchMove(e) {
-        try {
-            if (e.touches && e.touches.length > 0) {
-                const touch = e.touches[0];
-                const dx = Math.abs(touch.clientX - touchStartPos.x);
-                const dy = Math.abs(touch.clientY - touchStartPos.y);
-                if (dx > 12 || dy > 12) {
-                    if (touchTimer) {
-                        clearTimeout(touchTimer);
-                        touchTimer = null;
-                    }
-                }
-            }
-        } catch (_) {}
-    }
-
-    function handleMapTouchEnd() {
-        try {
-            lastTouchEndTime = Date.now();
-            isTouching = false;
-            if (touchTimer) {
-                clearTimeout(touchTimer);
-                touchTimer = null;
-            }
-            if (isRightMouseDown) {
-                isRightMouseDown = false;
-                clearMarker();
-            }
-        } catch (_) {}
-    }
-
+        // =================== Event Listeners Rebind Management (PC Only) ===================
     function attachMapListeners() {
         if (!isMapValid(foundMap)) return;
         try {
@@ -707,10 +636,6 @@
                     currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
                     currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
                     currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
-                    currentAttachedDiv.removeEventListener("touchstart", handleMapTouchStart);
-                    currentAttachedDiv.removeEventListener("touchmove", handleMapTouchMove);
-                    currentAttachedDiv.removeEventListener("touchend", handleMapTouchEnd);
-                    currentAttachedDiv.removeEventListener("touchcancel", handleMapTouchEnd);
                 }
                 currentAttachedDiv = targetEl;
             }
@@ -720,27 +645,14 @@
             targetEl.removeEventListener("mouseup", handleMouseUp);
             targetEl.removeEventListener("mouseleave", handleMouseLeave);
             targetEl.removeEventListener("contextmenu", handleContextMenu);
-            targetEl.removeEventListener("touchstart", handleMapTouchStart);
-            targetEl.removeEventListener("touchmove", handleMapTouchMove);
-            targetEl.removeEventListener("touchend", handleMapTouchEnd);
-            targetEl.removeEventListener("touchcancel", handleMapTouchEnd);
 
             targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
             targetEl.addEventListener("mousedown", handleMouseDown);
             targetEl.addEventListener("mouseup", handleMouseUp);
             targetEl.addEventListener("mouseleave", handleMouseLeave);
             targetEl.addEventListener("contextmenu", handleContextMenu);
-
-            targetEl.addEventListener("touchstart", handleMapTouchStart, { passive: true });
-            targetEl.addEventListener("touchmove", handleMapTouchMove, { passive: true });
-            targetEl.addEventListener("touchend", handleMapTouchEnd, { passive: true });
-            targetEl.addEventListener("touchcancel", handleMapTouchEnd, { passive: true });
         } catch (_) {}
     }
-
-    // =================== Human-Like Pan & Zoom ===================
-    let currentPanAnimId = null;
-    let currentZoomTimerId = null;
 
     function stopCurrentAction() {
         if (currentPanAnimId) {
@@ -1077,8 +989,6 @@
                     link.style.cursor = "pointer";
                     link.style.userSelect = "none";
                     link.style.webkitUserSelect = "none";
-                    link.style.touchAction = "manipulation";
-
                     const desired = dotAdded ? "Map Terms" : "Terms";
                     if (link.textContent !== desired) {
                         link.textContent = desired;
@@ -1101,8 +1011,6 @@
                             return false;
                         };
                         link.addEventListener("click", toggleHandler, true);
-                        link.addEventListener("touchend", toggleHandler, true);
-                        link.addEventListener("pointerdown", toggleHandler, true);
                         link.onclick = toggleHandler;
                     }
                 } catch (_) {}
@@ -1130,959 +1038,8 @@
     }
 
     window.addEventListener("click", handleTermsTrigger, true);
-    window.addEventListener("touchend", handleTermsTrigger, true);
-    window.addEventListener("pointerdown", handleTermsTrigger, true);
     document.addEventListener("click", handleTermsTrigger, true);
-    document.addEventListener("touchend", handleTermsTrigger, true);
-    document.addEventListener("pointerdown", handleTermsTrigger, true);
-
-                // =================== GeoGuessr Clue Assistant (Official GeoGuessr v4 Clues + Plonkit Meta) ===================
-    const GEO_CLUES = {
-    "DK": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4 (Low Cam)",
-        "domain": ".dk",
-        "bollard": "Putih strip merah atas, bagian belakang putih polos",
-        "pole": "Tiang kayu/beton persegi panjang polos",
-        "plate": "Plat putih strip biru EU kiri, border merah tipis (plat kuning = komersial)",
-        "lines": "Garis tepi putih putus-putus pendek rapat",
-        "tips": "Huruf æ, ø, å. Nama jalan -vej/-gade. Topografi sangat datar, banyak sepeda."
-    },
-    "SE": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".se",
-        "bollard": "Putih reflektor oranye depan, putih belakang",
-        "pole": "Tiang kayu dengan isolator kaca/keramik",
-        "plate": "Plat putih strip biru EU, format 3 huruf 3 angka/huruf",
-        "lines": "Garis tepi putih putus-putus pendek, garis tengah putih",
-        "tips": "Huruf ä, ö, å. Rumah cat merah Falu red, hutan birch/pinus, bergelombang."
-    },
-    "NO": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".no",
-        "bollard": "Putih dengan reflektor strip putih depan dan belakang",
-        "pole": "Tiang kayu dengan pengait isolator di pucuk",
-        "plate": "Plat putih strip bendera Norwegia (plat hijau = komersial)",
-        "lines": "Garis tengah KUNING, garis tepi putih solid",
-        "tips": "Huruf æ, ø, å. Jalan 'veg'. Fjord, pegunungan terjal, terowongan panjang."
-    },
-    "FI": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".fi",
-        "bollard": "Reflektor persegi panjang putih/oranye, tiang salju oranye/kayu",
-        "pole": "Tiang kayu silang, banyak tiang penanda salju",
-        "plate": "Plat putih strip EU, format 3 huruf - 3 angka (tanpa border bendera)",
-        "lines": "Garis tengah putih, garis tepi putih solid",
-        "tips": "Bahasa Finno-Ugric vokal ganda (aa, ee, ii, oo, uu, ä, ö). Danau & hutan pohon birch."
-    },
-    "IS": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".is",
-        "bollard": "Kuning cerah silinder dengan strip reflektor hitam/putih",
-        "pole": "Tiang kayu kokoh dengan palang horizontal",
-        "plate": "Plat putih strip bendera Islandia, huruf biru",
-        "lines": "Garis tengah putih putus-putus, tepi putih",
-        "tips": "Lansekap vulkanik tanpa pohon, lumut tebal, jalan kerikil, huruf ð, þ, æ."
-    },
-    "EE": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ee",
-        "bollard": "Putih dengan reflektor oranye depan, putih belakang",
-        "pole": "Tiang beton persegi dengan tiang penopang diagonal (A-frame)",
-        "plate": "Plat putih strip biru EU",
-        "lines": "Garis tepi putih putus-putus jarang",
-        "tips": "Huruf õ, ä, ö, ü. Mirip Finlandia tapi arsitektur & tiang listrik ala Soviet/Eropa Timur."
-    },
-    "LV": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".lv",
-        "bollard": "Putih bulat dengan reflektor oranye/putih",
-        "pole": "Tiang beton silinder dengan lubang melingkar atau penyangga A",
-        "plate": "Plat putih strip biru EU, format 2 huruf - 4 angka",
-        "lines": "Garis tepi putih putus-putus panjang",
-        "tips": "Huruf diakritik ā, ē, ī, ū, č, ģ, ķ, ļ, ņ, š, ž. Jalan tanah liat merah/pasir."
-    },
-    "LT": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".lt",
-        "bollard": "Putih reflektor merah/oranye depan, putih belakang",
-        "pole": "Tiang beton trapesium/silinder Soviet",
-        "plate": "Plat putih strip biru EU, stiker uji emisi bulat di tengah",
-        "lines": "Garis tepi putih solid atau putus-putus",
-        "tips": "Huruf ą, č, ę, ė, į, š, ų, ū, ž. Akhiran nama kota/jalan -as, -is, -us."
-    },
-    "GB": {
-        "drive": "Kiri",
-        "cam": "Gen 2/3/4",
-        "domain": ".uk/.co.uk",
-        "bollard": "Reflektor merah belakang/kiri, putih depan",
-        "pole": "Tiang kayu tebal dengan plat logam strip kuning bertuliskan nomor",
-        "plate": "Plat PUTIH di depan, KUNING di belakang",
-        "lines": "Garis zigzag putih di penyeberangan jalan, garis tepi kuning ganda",
-        "tips": "Setir KIRI. Huruf 'Give Way' di jalan, arsitektur bata merah, jalan sempit berpagar tanaman."
-    },
-    "IE": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".ie",
-        "bollard": "Silinder putih dengan reflektor putih/merah",
-        "pole": "Tiang kayu sering ada kotak sekring trafo kecil",
-        "plate": "Plat putih depan & belakang dengan strip biru EU dan nama county Gaelic di atas",
-        "lines": "Garis tepi kuning putus-putus (khas Irlandia!), garis tengah putih",
-        "tips": "Rambu dwibahasa Inggris & Gaelic (tulisan miring). Pagar batu khas bukit hijau."
-    },
-    "FR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".fr",
-        "bollard": "Putih bulat silinder dengan tutup atas miring putih (chapeau blanc)",
-        "pole": "Tiang kayu dengan fitting logam melengkung ke atas / tiang beton berpola tangga",
-        "plate": "Plat strip biru di KEDUA ujung (kiri bendera EU, kanan logo region)",
-        "lines": "Garis tepi putih putus-putus panjang (interval 13m)",
-        "tips": "Tanda panah rambu panah berujung lancip. Kode jalan D (Departementale) & N (Nationale)."
-    },
-    "DE": {
-        "drive": "Kanan",
-        "cam": "Gen 4 (banyak Blur/Gen 3 lama)",
-        "domain": ".de",
-        "bollard": "Putih dengan strip miring hitam tebal & reflektor putih panjang",
-        "pole": "Sangat sedikit tiang listrik (kabel bawah tanah), jika ada tiang kayu gelap",
-        "plate": "Plat putih strip EU kiri dengan segel bulat Bundesland di tengah",
-        "lines": "Garis tepi putih solid, garis tengah putih putus-putus",
-        "tips": "Banyak rumah diblur privasi (khas Jerman). Tanda jalan kotak biru dengan font DIN 1451."
-    },
-    "NL": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".nl",
-        "bollard": "Hitam reflektor merah / merah-putih",
-        "pole": "Hampir semua kabel tertanam di bawah tanah",
-        "plate": "Plat KUNING depan dan belakang dengan strip EU biru",
-        "lines": "Garis hijau di tengah jalan (jalan 100km/h), lajur sepeda merah bata",
-        "tips": "Paving blok bata merah di trotoar/jalan, sangat tertata rapi, kanal air, kincir."
-    },
-    "BE": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".be",
-        "bollard": "Putih reflektor merah/oranye",
-        "pole": "Lampu jalan tiang beton tinggi melengkung di jalan tol",
-        "plate": "Plat putih dengan teks dan bingkai warna MERAH HATI (Burgundy/Crimson)",
-        "lines": "Garis tepi putih solid",
-        "tips": "Kualitas aspal lebih kasar dari Belanda. Bahasa Prancis (selatan) & Belanda (utara)."
-    },
-    "ES": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".es",
-        "bollard": "Putih dengan reflektor kuning/oranye vertikal",
-        "pole": "Tiang beton persegi dengan lubang silang/tangga atau tiang kayu",
-        "plate": "Plat putih strip biru EU kiri",
-        "lines": "Garis tepi putih solid, garis tengah putih",
-        "tips": "Pagar pembatas jalan berkaki bulat. Pohon zaitun, tanah merah kering, huruf ñ."
-    },
-    "PT": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".pt",
-        "bollard": "Putih reflektor persegi panjang",
-        "pole": "Tiang beton berongga tangga (ladder poles) khas Semenanjung Iberia",
-        "plate": "Plat strip biru EU di kiri (mobil lama ada strip kuning di kanan)",
-        "lines": "Garis tepi putih, garis tengah putih",
-        "tips": "Huruf ã, õ, ç. Rumah berkeramik (azulejos), trotoar batu mosaik kecil hitam-putih."
-    },
-    "IT": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".it",
-        "bollard": "Putih dengan strip hitam atas dan reflektor oranye depan, putih belakang",
-        "pole": "Tiang kayu gelap dengan isolator atau beton silang",
-        "plate": "Plat DEPAN KECIL (khas Italia!) dan strip biru di kedua sisi",
-        "lines": "Garis tepi putih solid, garis tengah putih",
-        "tips": "Plat depan pendek/mini adalah kunci instan Italia. Pohon cemara pensil (cypress)."
-    },
-    "CH": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4 (Low Cam)",
-        "domain": ".ch",
-        "bollard": "Putih dengan reflektor strip vertikal hitam",
-        "pole": "Tiang kayu bersih dengan isolator logam",
-        "plate": "Plat depan kecil, plat belakang ada lambang kanton & bendera Swiss",
-        "lines": "Garis kuning di tempat penyeberangan pejalan kaki (zebra cross kuning khas!)",
-        "tips": "Kamera agak rendah (Low Cam). Rambu warna biru/hijau terbalik (Tol hijau, utama biru)."
-    },
-    "AT": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".at",
-        "bollard": "Putih melengkung atas dengan reflektor merah di dalam lekukan",
-        "pole": "Tiang kayu tunggal atau beton",
-        "plate": "Plat putih strip biru EU dengan lambang negara bagian Austria di tengah, bingkai merah",
-        "lines": "Garis tepi putih solid",
-        "tips": "Pegunungan Alpen, rumah kayu chalet dengan bunga di jendela. Mirip Jerman tapi tidak diblur."
-    },
-    "PL": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".pl",
-        "bollard": "Putih dengan strip MERAH vertikal tebal dan reflektor (khas Polandia!)",
-        "pole": "Tiang beton bulat berlubang-lubang lingkaran sepanjang tiang (khas Polandia!)",
-        "plate": "Plat putih strip biru EU kiri",
-        "lines": "Garis tepi putih solid / putus-putus",
-        "tips": "Tiang listrik berlubang lingkaran = 100% Polandia. Huruf ł, ą, ę, ś, ć, ż, ź."
-    },
-    "CZ": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".cz",
-        "bollard": "Putih reflektor oranye depan, putih belakang dengan leher hitam",
-        "pole": "Tiang beton dengan sambungan palang besi",
-        "plate": "Plat putih strip biru EU, huruf kedua adalah kode region (misal: B=Brno, A=Praha)",
-        "lines": "Garis tepi putih solid",
-        "tips": "Huruf ř, ů, ě, č, š, ž. Tanda belokan panah hitam di atas latar putih berbingkai merah."
-    },
-    "SK": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".sk",
-        "bollard": "Putih reflektor oranye depan, putih belakang",
-        "pole": "Tiang beton persegi Soviet",
-        "plate": "Plat putih strip biru EU dengan lambang salib ganda Slovakia",
-        "lines": "Garis tepi putih solid",
-        "tips": "Huruf ä, ô, ĺ, ŕ, č, š, ž. Arsitektur kastil dan pegunungan Tatra."
-    },
-    "HU": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".hu",
-        "bollard": "Putih reflektor merah/oranye depan, putih belakang",
-        "pole": "Tiang beton berlubang persegi panjang atau silinder",
-        "plate": "Plat putih strip biru EU",
-        "lines": "Garis tepi putih putus-putus",
-        "tips": "Huruf ő, ű (garis kutip dua miring), á, é, í, ó, ú. Nama jalan berakhiran 'utca' atau 'út'."
-    },
-    "RO": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ro",
-        "bollard": "Putih reflektor oranye depan, merah belakang",
-        "pole": "Tiang beton bercat putih di bagian bawah (khas pedesaan Rumania!)",
-        "plate": "Plat putih strip biru EU",
-        "lines": "Garis tepi putih solid",
-        "tips": "Pangkal tiang dicat putih. Huruf ă, â, î, ș, ț. Rumah dengan cerobong asap seng lancip."
-    },
-    "BG": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Winter Cam)",
-        "domain": ".bg",
-        "bollard": "Putih reflektor merah/oranye",
-        "pole": "Tiang beton persegi Soviet",
-        "plate": "Plat putih strip biru EU",
-        "lines": "Garis tengah putih, tepi putih",
-        "tips": "Aksara Kiril (Cyrillic) dengan plat EU. Banyak kamera musim dingin (Winter Cam berdaun gugur)."
-    },
-    "GR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".gr",
-        "bollard": "Putih reflektor merah belakang, putih depan",
-        "pole": "Tiang kayu dengan sambungan isolator porselen bulat",
-        "plate": "Plat putih strip biru EU",
-        "lines": "Garis tengah putih solid ganda, sering jalan berbatu putih",
-        "tips": "Aksara Yunani (Greek: Ω, Σ, Δ, Φ, Γ). Pohon zaitun, tanah tandus berkapur, gereja berkubah biru."
-    },
-    "TR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".tr",
-        "bollard": "Putih dengan reflektor strip vertikal merah",
-        "pole": "Tiang kisi baja besi segitiga atau beton silinder",
-        "plate": "Plat putih strip biru kiri (tanpa lambang bintang EU, hanya TR)",
-        "lines": "Garis tengah putih putus-putus panjang, tepi putih",
-        "tips": "Huruf ı (i tanpa titik), ğ, ş, ç, ö, ü. Masjid dengan menara pensil lancip di tiap desa."
-    },
-    "HR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".hr",
-        "bollard": "Putih reflektor merah/oranye",
-        "pole": "Tiang beton silinder atau kayu",
-        "plate": "Plat putih strip biru EU dengan lambang catur merah-putih Kroasia di tengah",
-        "lines": "Garis tepi putih solid",
-        "tips": "Pesisir pantai berbatu Laut Adriatik, pohon pinus pantai, atap genteng merah terakota."
-    },
-    "RS": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".rs",
-        "bollard": "Putih reflektor merah",
-        "pole": "Tiang beton Soviet",
-        "plate": "Plat putih strip biru kiri lambang SRB",
-        "lines": "Garis tengah putih",
-        "tips": "Dwibahasa: Aksara Latin & Kiril secara bersamaan di rambu petunjuk jalan."
-    },
-    "UA": {
-        "drive": "Kanan",
-        "cam": "Gen 2/3 (Kamera bergaris merah)",
-        "domain": ".ua",
-        "bollard": "Putih strip hitam bawah dan reflektor merah",
-        "pole": "Tiang beton Soviet sering dicat putih di bawah",
-        "plate": "Plat putih strip bendera Ukraina biru-kuning di kiri",
-        "lines": "Garis tengah putih",
-        "tips": "Aksara Kiril dengan huruf khas: і, ї, є (tidak ada di bahasa Rusia). Mobil Google ada antena merah."
-    },
-    "RU": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ru",
-        "bollard": "Putih dengan strip miring hitam dan reflektor",
-        "pole": "Tiang beton tebal Soviet",
-        "plate": "Plat putih dengan kode region 2-3 angka di kanan dan bendera Rusia kecil di bawahnya",
-        "lines": "Garis tengah putih / kuning di beberapa wilayah",
-        "tips": "Aksara Kiril (huruf ы, э, ъ). Pipa gas kuning menyilang di atas jalan perumahan."
-    },
-    "JP": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4 (Low Cam)",
-        "domain": ".jp",
-        "bollard": "Tiang putih dengan reflektor bundar/strip oranye dan stiker kuning",
-        "pole": "Tiang beton bulat bertingkat dengan pijakan besi panjat dan plat nomor kuning",
-        "plate": "Plat PUTIH (pribadi besar), KUNING (kei car mini), HIJAU (komersial)",
-        "lines": "Garis tengah KUNING, garis tepi putih solid",
-        "tips": "Setir KIRI. Kamera rendah (Low Cam). Tulisan Kanji/Hiragana/Katakana. Cermin cembung tikungan."
-    },
-    "KR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".kr",
-        "bollard": "Silinder putih dengan strip reflektor oranye/kuning",
-        "pole": "Tiang beton silinder dengan strip nomor kuning/hitam bergradasi",
-        "plate": "Plat putih panjang dengan aksara Hangul di tengah",
-        "lines": "Garis tengah kuning ganda, garis tepi putih solid",
-        "tips": "Aksara Hangul (kotak & lingkaran). Rambu nomor rute berbentuk oval biru atau perisai."
-    },
-    "TW": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".tw",
-        "bollard": "Putih reflektor oranye",
-        "pole": "Bagian bawah tiang dicat STRIP KUNING-HITAM diagonal miring (khas Taiwan!)",
-        "plate": "Plat putih format ABC-1234 atau 123-AB",
-        "lines": "Garis tengah kuning ganda",
-        "tips": "Garis kuning-hitam di tiang listrik = 99% Taiwan. Aksara Hanzi Tradisional."
-    },
-    "HK": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".hk",
-        "bollard": "Bollard bergaya kolonial Inggris",
-        "pole": "Tiang lampu jalan hijau tua / abu-abu bergaya Inggris",
-        "plate": "Plat PUTIH di depan, KUNING di belakang (seperti Inggris)",
-        "lines": "Garis jalan gaya Inggris, tulisan 'SLOW' atau 'LOOK LEFT' di aspal",
-        "tips": "Setir KIRI. Dwibahasa Inggris & Kanton tradisional. Gedung pencakar langit super rapat."
-    },
-    "SG": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".sg",
-        "bollard": "Bollard hitam-putih reflektor merah",
-        "pole": "Tiang lampu hijau tua rapi dengan tanaman rambat terawat",
-        "plate": "Plat HITAM dengan teks putih (depan) dan plat KUNING/HITAM (belakang)",
-        "lines": "Garis tepi putih putus-putus, garis tengah putih ganda",
-        "tips": "Setir KIRI. Kota sangat hijau, bersih, modern, rambu bahasa Inggris formal."
-    },
-    "ID": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".id",
-        "bollard": "Patok batas jalan hitam-putih zebra",
-        "pole": "Tiang beton bulat dengan 3 kabel paralel atau tiang baja melengkung",
-        "plate": "Plat HITAM teks putih (mobil baru putih teks hitam) dengan masa berlaku pajak",
-        "lines": "Garis tengah kuning putus-putus / solid, garis tepi putih",
-        "tips": "Setir KIRI. Bahasa Indonesia (Jl., Gg., RT/RW, Warung, Indomaret/Alfamart, SPBU Pertamina)."
-    },
-    "MY": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".my",
-        "bollard": "Putih dengan reflektor merah",
-        "pole": "Tiang beton persegi atau tiang hitam dengan nomor putih vertikal",
-        "plate": "Plat HITAM teks putih di depan dan belakang tanpa garis bulan/tahun pajak",
-        "lines": "Garis tengah putih putus-putus tebal, garis tepi putih solid",
-        "tips": "Setir KIRI. Rambu 'JALAN', 'BERHENTI', 'IKUT KIRI'. Nomor rute jalan di dalam kotak kuning."
-    },
-    "TH": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".th",
-        "bollard": "Tonggak beton tebal putih bulat atau patok kilometer besar bertuliskan angka Thai",
-        "pole": "Tiang listrik PERSEGI BERONGGA 4 LUBANG (khas Thailand!)",
-        "plate": "Plat putih teks hitam dengan aksara Thai (plat kuning = komersial/truk)",
-        "lines": "Garis tengah kuning ganda atau putus-putus",
-        "tips": "Setir KIRI. Aksara Thai bulat berlekuk. Tiang listrik berlubang persegi = kunci Thailand."
-    },
-    "PH": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ph",
-        "bollard": "Patok semen putih dengan kilometer penanda",
-        "pole": "Tiang kayu/beton penuh kabel semrawut bergaya Amerika Serikat",
-        "plate": "Plat putih strip hijau di bawah (mobil lama) atau plat putih bersih",
-        "lines": "Garis tengah kuning, garis tepi putih",
-        "tips": "Satu-satunya negara Asia Tenggara berkendara di KANAN yang pakai bahasa Inggris/Tagalog. Jeepney, tricycle."
-    },
-    "KH": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".kh",
-        "bollard": "Patok beton merah-putih",
-        "pole": "Tiang beton bulat Soviet",
-        "plate": "Plat putih strip biru-merah dengan aksara Khmer di atas",
-        "lines": "Garis tengah kuning putus-putus",
-        "tips": "Aksara Khmer (berlekuk tajam dengan topi). Berkendara di sisi KANAN. Tanah berpasir kemerahan."
-    },
-    "BD": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".bd",
-        "bollard": "Patok beton merah-putih atau hitam-putih",
-        "pole": "Tiang beton atau baja dengan palang melengkung",
-        "plate": "Plat hijau dengan teks Bengali (CNG/taksi) atau hitam/putih",
-        "lines": "Garis tengah putih/kuning jarang ada",
-        "tips": "Setir KIRI. Aksara Bengali (garis horizontal di atas huruf). Becak rickshaw warna-warni."
-    },
-    "LK": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".lk",
-        "bollard": "Patok beton putih dengan ujung hitam",
-        "pole": "Tiang beton cor kasar dengan banyak lubang kecil",
-        "plate": "Plat putih depan, kuning belakang dengan huruf provinsi kecil di kiri (misal WP = Western Province)",
-        "lines": "Garis tengah putih putus-putus",
-        "tips": "Setir KIRI. Aksara Sinhala (bulat seperti apel/lingkaran) & Tamil. Pohon kelapa lebat."
-    },
-    "BT": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".bt",
-        "bollard": "Patok beton merah-putih",
-        "pole": "Tiang kayu di jalan pegunungan",
-        "plate": "Plat MERAH TEKS PUTIH (khas Bhutan!)",
-        "lines": "Garis tengah putih jarang",
-        "tips": "Setir KIRI. Plat merah = 100% Bhutan! Pegunungan Himalaya, arsitektur kayu berukir ornamen naga."
-    },
-    "MN": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Mobil Camping / Tenda Merah)",
-        "domain": ".mn",
-        "bollard": "Sangat jarang ada bollard",
-        "pole": "Tiang beton silinder dengan kabel kendur",
-        "plate": "Plat putih aksara Kiril",
-        "lines": "Hampir tidak ada garis jalan di padang rumput",
-        "tips": "Mobil Google bawa tenda merah / bagasi camping di atap (Roof Rack khas Mongolia). Padang rumput stepa luas."
-    },
-    "KG": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Roof Rack besi khas)",
-        "domain": ".kg",
-        "bollard": "Patok semen putih bergaris hitam miring",
-        "pole": "Tiang beton persegi Soviet",
-        "plate": "Plat putih dengan bendera Kirgizstan (matahari kuning pada latar merah) di kiri",
-        "lines": "Garis tengah putih",
-        "tips": "Mobil Google punya roof rack besi di atap. Pegunungan bersalju Tian Shan. Aksara Kiril."
-    },
-    "AU": {
-        "drive": "Kiri",
-        "cam": "Gen 2/3/4",
-        "domain": ".au/.com.au",
-        "bollard": "Putih dengan reflektor MERAH di kiri, PUTIH di kanan (khas Australia)",
-        "pole": "Tiang kayu tebal alami (sering pohon eukaliptus tanpa dihaluskan)",
-        "plate": "Plat putih/kuning beragam tergantung negara bagian",
-        "lines": "Garis tengah putih putus-putus, garis tepi putih solid",
-        "tips": "Setir KIRI. Tanah merah kering (outback), pohon eucalyptus/gum tree, rambu peringatan kanguru/wombat."
-    },
-    "NZ": {
-        "drive": "Kiri",
-        "cam": "Gen 2/3/4",
-        "domain": ".nz/.co.nz",
-        "bollard": "Putih reflektor merah di sisi kiri, putih di kanan dengan strip merah melingkar penuh di tiang",
-        "pole": "Tiang beton berongga atau tiang kayu dengan nomor putih vertikal",
-        "plate": "Plat putih bersih tanpa strip biru format ABC123",
-        "lines": "Garis tengah putih putus-putus atau kuning ganda di tanjakan/tikungan",
-        "tips": "Setir KIRI. Bukit hijau berumput sangat subur, pohon pakis perak (silver fern), tiang reflektor strip penuh."
-    },
-    "US": {
-        "drive": "Kanan",
-        "cam": "Gen 2/3/4",
-        "domain": ".com/.us",
-        "bollard": "Bollard jarang di jalan raya, reflektor kuning/putih di pagar besi",
-        "pole": "Tiang kayu gelap dengan kabel kusut & trafo kaleng silinder",
-        "plate": "Plat belakang wajib, plat pendek format negara bagian (motif warna-warni khas tiap state)",
-        "lines": "Garis tengah KUNING (putus-putus untuk salip, solid ganda dilarang salip), tepi putih",
-        "tips": "Tanda 'SPEED LIMIT', rambu kuning belah ketupat, kotak pos di pinggir jalan, truk pikap besar."
-    },
-    "CA": {
-        "drive": "Kanan",
-        "cam": "Gen 2/3/4",
-        "domain": ".ca",
-        "bollard": "Tiang kayu dengan reflektor hijau/oranye",
-        "pole": "Tiang kayu mirip AS dengan trafo silinder",
-        "plate": "Plat nomor tiap provinsi (Quebec bahasa Prancis, Ontario putih biru, NW Territories bentuk beruang)",
-        "lines": "Garis tengah kuning, garis tepi putih",
-        "tips": "Rambu kecepatan bertuliskan 'MAXIMUM' (bukan Speed Limit), satuan km/h, daun maple."
-    },
-    "MX": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".mx",
-        "bollard": "Tonggak beton putih dengan reflektor oranye",
-        "pole": "Tiang beton persegi dengan lubang silang atau tiang kayu",
-        "plate": "Plat nomor dengan desain grafis negara bagian Meksiko di latar belakang",
-        "lines": "Garis tengah putih (sering kali putih di jalan tol) atau kuning",
-        "tips": "Tanda 'ALTO' untuk stop sign (bukan STOP/PARE). Tiang lampu jalan bercat putih di bawah. Pohon kaktus."
-    },
-    "BR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".br",
-        "bollard": "Patok beton putih dengan reflektor merah",
-        "pole": "Tiang beton bertingkat dengan tangga pijakan (Ladder Pole khas Brazil!)",
-        "plate": "Plat Mercosur strip biru di atas atau plat abu-abu lama",
-        "lines": "Garis tengah kuning solid ganda, garis tepi putih",
-        "tips": "Punggung rambu lalu lintas dicat HITAM di belakangnya! Bahasa Portugis (Rua, Rodovia, Posto). Tanah merah."
-    },
-    "AR": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ar",
-        "bollard": "Putih reflektor oranye",
-        "pole": "Tiang beton atau tiang kayu tipis",
-        "plate": "Plat hitam lama teks putih atau plat Mercosur strip biru tengah titik putih",
-        "lines": "Garis tengah kuning putus-putus, tepi putih",
-        "tips": "Punggung rambu lalu lintas TIDAK dicat hitam (polos seng abu-abu). Pohon poplar/pampa datar luas."
-    },
-    "CL": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".cl",
-        "bollard": "Putih reflektor oranye/merah",
-        "pole": "Tiang beton silinder atau kayu, sering ada stiker garis putih-hitam di tiang",
-        "plate": "Plat putih polos huruf hitam format 4 huruf 2 angka (tanpa strip biru)",
-        "lines": "Garis tengah putih di jalan tol, kuning di jalan pedesaan",
-        "tips": "Garis putih jalan tol sangat terawat. Pegunungan Andes menjulang tinggi di sisi timur."
-    },
-    "CO": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".co",
-        "bollard": "Patok putih reflektor merah",
-        "pole": "Tiang beton silinder dengan isolator pin ganda",
-        "plate": "Plat KUNING CERAH untuk mobil pribadi dan plat putih untuk taksi/publik",
-        "lines": "Garis tengah kuning, garis tepi putih",
-        "tips": "Hampir semua mobil pribadi berplat KUNING! Gunung hijau tropis sangat terjal, pohon kopi/bambu."
-    },
-    "PE": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".pe",
-        "bollard": "Patok beton garis diagonal hitam-putih",
-        "pole": "Tiang beton dengan sambungan palang T kayu atau beton",
-        "plate": "Plat putih strip bendera Peru di kiri atas atau strip kuning di atas",
-        "lines": "Garis tengah kuning ganda",
-        "tips": "Punggung rambu lalu lintas dicat KUNING-HITAM diagonal! Bukit pasir gersang pantai atau pegunungan Andes."
-    },
-    "EC": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ec",
-        "bollard": "Putih strip merah",
-        "pole": "Tiang beton persegi Soviet/Amerika Latin",
-        "plate": "Plat putih strip bendera Ekuador kecil di atas",
-        "lines": "Garis tengah kuning, garis tepi putih",
-        "tips": "Rambu nomor jalan raya nasional ada gambar burung Kondor (khas Ekuador). Pegunungan hijau vulkanik."
-    },
-    "BO": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".bo",
-        "bollard": "Batu pembatas putih",
-        "pole": "Tiang kayu tipis atau beton kasar",
-        "plate": "Plat putih dengan strip bendera Bolivia di kiri atas",
-        "lines": "Garis tengah kuning putus-putus",
-        "tips": "Dataran tinggi Altiplano gersang, bangunan bata merah tanpa plester/semen luar."
-    },
-    "UY": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".uy",
-        "bollard": "Patok kayu/beton putih reflektor merah",
-        "pole": "Tiang beton bulat dengan tiang segitiga",
-        "plate": "Plat Mercosur strip biru atas dengan tulisan URUGUAY",
-        "lines": "Garis tengah putih/kuning",
-        "tips": "Sangat datar dan berumput hijau, jalanan tenang, pohon palem Capitata (Palmar de Castillos)."
-    },
-    "ZA": {
-        "drive": "Kiri",
-        "cam": "Gen 2/3/4",
-        "domain": ".za/.co.za",
-        "bollard": "Reflektor merah/putih",
-        "pole": "Tiang kayu dengan palang isolator logam",
-        "plate": "Plat putih/kuning tergantung provinsi (Gauteng putih biru, Western Cape putih hitam)",
-        "lines": "Garis tepi KUNING dan garis tengah PUTIH (kebalikan dari AS!)",
-        "tips": "Setir KIRI. Garis tepi jalan warna KUNING = khas Afrika Selatan. Rambu font DIN 1451."
-    },
-    "BW": {
-        "drive": "Kiri",
-        "cam": "Gen 3/4",
-        "domain": ".bw",
-        "bollard": "Patok kayu/beton reflektor merah",
-        "pole": "Tiang kayu tebal",
-        "plate": "Plat biru muda/putih depan dan kuning belakang",
-        "lines": "Garis tepi kuning, garis tengah putih",
-        "tips": "Setir KIRI. Sangat datar dan kering (Gurun Kalahari). Pohon akasia berduri, keledai liar di jalan."
-    },
-    "KE": {
-        "drive": "Kiri",
-        "cam": "Gen 3 (Mobil Snorkel Hitam)",
-        "domain": ".ke",
-        "bollard": "Patok beton putih ujung hitam",
-        "pole": "Tiang kayu kasar alami",
-        "plate": "Plat putih depan, kuning belakang (mirip Inggris)",
-        "lines": "Garis tengah kuning putus-putus",
-        "tips": "Setir KIRI. Mobil Google punya pipa SNORKEL HITAM di pilar depan kanan! Tanah merah marun."
-    },
-    "UG": {
-        "drive": "Kiri",
-        "cam": "Gen 3 (Mobil Spion Putih)",
-        "domain": ".ug",
-        "bollard": "Patok putih ujung merah",
-        "pole": "Tiang kayu",
-        "plate": "Plat putih depan dan belakang",
-        "lines": "Garis tengah kuning",
-        "tips": "Setir KIRI. Mobil Google terlihat kap depan putih atau spion putih. Bukit sangat hijau subur dan lembap."
-    },
-    "GH": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Roof Rack Lakban Hitam)",
-        "domain": ".gh",
-        "bollard": "Patok beton merah-putih",
-        "pole": "Tiang kayu",
-        "plate": "Plat kuning/putih format GT-1234",
-        "lines": "Garis tengah kuning",
-        "tips": "Roof rack mobil Google diikat LAKBAN HITAM tebal di salah satu kakinya! Bahasa Inggris."
-    },
-    "NG": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Mobil Polisi Pengawal)",
-        "domain": ".ng",
-        "bollard": "Bollard jarang",
-        "pole": "Tiang beton bulat",
-        "plate": "Plat putih teks biru/hijau",
-        "lines": "Garis tengah kuning",
-        "tips": "Sering terlihat mobil polisi patroli pengawal (Police Escort Car) di depan atau belakang mobil Google."
-    },
-    "SN": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Roof Rack Palang)",
-        "domain": ".sn",
-        "bollard": "Patok semen putih",
-        "pole": "Tiang beton",
-        "plate": "Plat nomor BIRU TUA dengan teks putih (khas Senegal!)",
-        "lines": "Garis tengah putih",
-        "tips": "Plat warna BIRU TUA. Pohon Baobab raksasa, pasir pantai Sahara, bahasa Prancis & Wolof."
-    },
-    "IL": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".il",
-        "bollard": "Putih dengan strip hitam dan reflektor oranye",
-        "pole": "Tiang beton bulat tebal dengan kotak logam",
-        "plate": "Plat KUNING TERANG dengan strip biru EU palsu di kiri (khas Israel!)",
-        "lines": "Garis tengah putih putus-putus ganda, trotoar cat merah-putih/biru-putih",
-        "tips": "Aksara Ibrani (Hebrew). Plat kuning terang di semua mobil sipil. Trotoar belang merah-putih."
-    },
-    "AE": {
-        "drive": "Kanan",
-        "cam": "Gen 3/4",
-        "domain": ".ae",
-        "bollard": "Reflektor modern",
-        "pole": "Tiang lampu jalan super megah dan tinggi",
-        "plate": "Plat putih teks hitam dengan tulisan emirate (Dubai, Abu Dhabi)",
-        "lines": "Garis tengah kuning, tepi putih",
-        "tips": "Jalan tol lebar 6-8 lajur sangat mulus, gurun pasir bersih, mobil mewah, dwibahasa Arab-Inggris."
-    },
-    "JO": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Roof Rack Hitam tebal)",
-        "domain": ".jo",
-        "bollard": "Patok putih reflektor oranye",
-        "pole": "Tiang beton silinder",
-        "plate": "Plat putih pendek format 2 angka - 5 angka",
-        "lines": "Garis putih putus-putus",
-        "tips": "Mobil Google beratap roof rack hitam tebal. Bukit bebatuan gurun cokelat kemerahan, aksara Arab."
-    },
-    "TN": {
-        "drive": "Kanan",
-        "cam": "Gen 3 (Roof Rack tanpa bar)",
-        "domain": ".tn",
-        "bollard": "Patok putih dengan ujung merah",
-        "pole": "Tiang beton Soviet",
-        "plate": "Plat HITAM TEKS PUTIH dengan tulisan bahasa Arab 'تونس' di tengah (khas Tunisia!)",
-        "lines": "Garis tengah putih",
-        "tips": "Satu-satunya negara Arab di Afrika Utara dengan Street View resmi penuh. Plat hitam tulisan Arab 'Tunisia'."
-    }
-};
-
-    let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
-    let plonkitIframeEl = null;
-
-    function getFlagEmoji(code) {
-        if (!code || code.length !== 2) return "🌍";
-        try {
-            return String.fromCodePoint(...code.toUpperCase().split("").map(c => 127397 + c.charCodeAt(0)));
-        } catch (_) {
-            return "🌍";
-        }
-    }
-
-    // =================== Translation Cache & Resolver (GeoGuessr i18n) ===================
-    const translationCache = {};
-
-    function formatFallbackClueKey(key) {
-        if (!key || typeof key !== "string") return "";
-        if (!key.startsWith("clue.")) return key;
-        let clean = key.replace(/^clue\./, "");
-        clean = clean.replace(/-(title|description)$/, "");
-        clean = clean.replace(/^[a-z]{2}-/, "");
-        clean = clean.replace(/[-_]/g, " ");
-        clean = clean.replace(/\b\w/g, c => c.toUpperCase());
-        return clean.trim();
-    }
-
-    function resolveTranslation(key) {
-        if (!key || typeof key !== "string") return Promise.resolve("");
-        if (!key.startsWith("clue.")) return Promise.resolve(key);
-        if (translationCache[key]) return Promise.resolve(translationCache[key]);
-
-        return fetch("/api/v3/translations/key/" + encodeURIComponent(key), { credentials: "omit" })
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data && Array.isArray(data.phrases) && data.phrases.length > 0) {
-                    const en = data.phrases.find(p => p.language === "en" || p.locale === "en_US") || data.phrases[0];
-                    if (en && en.phrase) {
-                        translationCache[key] = en.phrase;
-                        return en.phrase;
-                    }
-                }
-                const fallback = formatFallbackClueKey(key);
-                translationCache[key] = fallback;
-                return fallback;
-            })
-            .catch(() => {
-                const fallback = formatFallbackClueKey(key);
-                translationCache[key] = fallback;
-                return fallback;
-            });
-    }
-
-    function getClueText(key, defaultText) {
-        if (!key) return defaultText || "";
-        if (!key.startsWith("clue.")) return key;
-        if (translationCache[key]) return translationCache[key];
-        resolveTranslation(key).then(() => {
-            if (plonkitActive && typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-        });
-        return formatFallbackClueKey(key);
-    }
-
-    function fetchZoomedImage(pano, clue) {
-        if (!pano || !clue) return Promise.resolve(null);
-        if (clue.image && (clue.image.startsWith("http") || clue.image.startsWith("data:"))) {
-            return Promise.resolve(clue.image);
-        }
-        let query = "";
-        if (typeof clue.heading === "number") {
-            query = "heading=" + encodeURIComponent(clue.heading) +
-                    "&pitch=" + encodeURIComponent(clue.pitch || 0) +
-                    "&fov=" + encodeURIComponent(clue.fov || 60);
-        } else if (clue.cell) {
-            query = "cell=" + encodeURIComponent(clue.cell);
-        } else {
-            return Promise.resolve(null);
-        }
-
-        return fetch("/api/v4/game-analysis/zoomed-image/" + encodeURIComponent(pano) + "?" + query, { credentials: "include" })
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                const img = data?.payload?.image || data?.image || null;
-                if (img) {
-                    clue.image = img;
-                }
-                return img;
-            })
-            .catch(() => null);
-    }
-
-    // =================== Official GeoGuessr Clues Engine (Iris AI) ===================
-    function triggerCluesFetch() {
-        const cc = (globalPlace.countryCode || "").toLowerCase();
-        const pano = currentPanoId || "";
-        if (!cc && !pano) return;
-
-        const cacheKey = `${cc}_${pano}`;
-        if (cachedGeoGuessrClues.key === cacheKey && (cachedGeoGuessrClues.countryClues.length > 0 || cachedGeoGuessrClues.panoClues.length > 0)) {
-            return;
-        }
-
-        cachedGeoGuessrClues.key = cacheKey;
-        cachedGeoGuessrClues.countryCode = cc;
-        cachedGeoGuessrClues.panoId = pano;
-        cachedGeoGuessrClues.loading = true;
-        cachedGeoGuessrClues.countryClues = [];
-        cachedGeoGuessrClues.panoClues = [];
-        cachedGeoGuessrClues.error = null;
-
-        if (plonkitActive && typeof updatePlonkitUI === "function") {
-            updatePlonkitUI();
-        }
-
-        const tasks = [];
-        // 1. Fetch official GeoGuessr country educational clues (/api/v4/clues/country/{countryCode}?count=8)
-        if (cc) {
-            tasks.push(
-                fetch("/api/v4/clues/country/" + encodeURIComponent(cc) + "?count=8", { credentials: "include" })
-                    .then(res => res.ok ? res.json() : null)
-                    .then(data => {
-                        let list = [];
-                        if (Array.isArray(data)) {
-                            list = data;
-                        } else if (data && Array.isArray(data.clues)) {
-                            list = data.clues;
-                        }
-                        cachedGeoGuessrClues.countryClues = list;
-                        list.forEach(item => {
-                            if (item.title && item.title.startsWith("clue.")) resolveTranslation(item.title);
-                            if (item.description && item.description.startsWith("clue.")) resolveTranslation(item.description);
-                        });
-                    })
-                    .catch(() => {})
-            );
-        }
-
-        // 2. Fetch official GeoGuessr panorama-specific visual clues (/api/v4/clues/{panoId})
-        if (pano) {
-            tasks.push(
-                fetch("/api/v4/clues/" + encodeURIComponent(pano), { credentials: "include" })
-                    .then(res => res.ok ? res.json() : null)
-                    .then(async data => {
-                        let list = [];
-                        if (Array.isArray(data)) {
-                            list = data;
-                        } else if (data && Array.isArray(data.clues)) {
-                            list = data.clues;
-                        }
-
-                        // Fallback to scout-clues if empty
-                        if (list.length === 0) {
-                            try {
-                                const scoutRes = await fetch("/api/v4/game-analysis/scout-clues/" + encodeURIComponent(pano), { credentials: "include" });
-                                if (scoutRes.ok) {
-                                    const scoutData = await scoutRes.json();
-                                    const payload = scoutData?.payload || scoutData;
-                                    if (Array.isArray(payload)) list = payload;
-                                    else if (Array.isArray(payload?.clues)) list = payload.clues;
-                                }
-                            } catch (_) {}
-                        }
-
-                        cachedGeoGuessrClues.panoClues = list;
-
-                        const subTasks = [];
-                        list.forEach(item => {
-                            if (item.title && item.title.startsWith("clue.")) {
-                                subTasks.push(resolveTranslation(item.title));
-                            }
-                            if (item.description && item.description.startsWith("clue.")) {
-                                subTasks.push(resolveTranslation(item.description));
-                            }
-                            if (!item.image && (typeof item.heading === "number" || item.cell)) {
-                                subTasks.push(fetchZoomedImage(pano, item));
-                            }
-                        });
-                        if (subTasks.length > 0) {
-                            await Promise.all(subTasks);
-                        }
-                    })
-                    .catch(() => {})
-            );
-        }
-
-        Promise.all(tasks).finally(() => {
-            cachedGeoGuessrClues.loading = false;
-            if (plonkitActive && typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-        });
-    }
-
-    function escapeHtml(str) {
-        if (!str) return "";
-        return String(str)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
-
-function getCountrySlug(countryName, countryCode) {
-        if (!countryName && !countryCode) return "";
-        const code = (countryCode || "").toUpperCase();
-        const codeMap = {
-            "US": "united-states", "GB": "united-kingdom", "UK": "united-kingdom",
-            "KR": "south-korea", "CZ": "czechia", "RU": "russia", "AE": "united-arab-emirates",
-            "DO": "dominican-republic", "NZ": "new-zealand", "ZA": "south-africa", "SZ": "eswatini",
-            "MK": "north-macedonia", "CW": "curacao", "LA": "laos", "KG": "kyrgyzstan",
-            "TW": "taiwan", "HK": "hong-kong", "SG": "singapore", "MY": "malaysia",
-            "ID": "indonesia", "TH": "thailand", "PH": "philippines", "VN": "vietnam",
-            "KH": "cambodia", "BD": "bangladesh", "LK": "sri-lanka", "BT": "bhutan",
-            "MN": "mongolia", "JP": "japan", "AU": "australia", "BR": "brazil",
-            "MX": "mexico", "CO": "colombia", "AR": "argentina", "CL": "chile",
-            "PE": "peru", "EC": "ecuador", "BO": "bolivia", "UY": "uruguay",
-            "DK": "denmark", "SE": "sweden", "NO": "norway", "FI": "finland",
-            "IS": "iceland", "EE": "estonia", "LV": "latvia", "LT": "lithuania",
-            "PL": "poland", "DE": "germany", "NL": "netherlands", "BE": "belgium",
-            "FR": "france", "ES": "spain", "PT": "portugal", "IT": "italy",
-            "CH": "switzerland", "AT": "austria", "IE": "ireland", "GR": "greece",
-            "TR": "turkey", "RO": "romania", "BG": "bulgaria", "HU": "hungary",
-            "SK": "slovakia", "SI": "slovenia", "HR": "croatia", "RS": "serbia",
-            "ME": "montenegro", "AL": "albania", "UA": "ukraine", "IL": "israel",
-            "JO": "jordan", "QA": "qatar", "TN": "tunisia", "KE": "kenya",
-            "UG": "uganda", "GH": "ghana", "NG": "nigeria", "SN": "senegal",
-            "BW": "botswana", "LS": "lesotho", "MD": "moldova", "AD": "andorra",
-            "SM": "san-marino", "MT": "malta", "LU": "luxembourg", "FO": "faroe-islands",
-            "GL": "greenland", "GU": "guam", "MP": "northern-mariana-islands",
-            "AS": "american-samoa", "PR": "puerto-rico", "VI": "us-virgin-islands", "BM": "bermuda"
-        };
-        if (code && codeMap[code]) {
-            return codeMap[code];
-        }
-        return (countryName || "")
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "");
-    }
-
+    // =================== Geomastr Official Country Database ===================
     const GEOMASTR_DATA = {"albania":{"c":"Europe","dr":"Right","l":"Albanian","cr":"Albanian Lek - Lek","dm":".al","ph":"+355","ab":"albanian.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Rruga","Sheshi","Bulevardi"],"bc":1,"pc":2,"po":1,"fs":["Kastrati.png","Alpet.png","Elda.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"american-samoa":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".as","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Avenue","Drive"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"andorra":{"c":"Europe","dr":"Right","l":"Catalan","cr":"Euro - €","dm":".ad","ph":"+376","ab":"latin.png","rl":"White Outside - White Inside","sx":["Carrer","Avinguda","Plaça","Passatge","Ronda","Camí"],"bc":2,"pc":3,"po":2,"fs":["Total.png","Esso.png","Repsol.png","Cepsa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"argentina":{"c":"South America","dr":"Right","l":"Spanish","cr":"Argentine Peso - $","dm":".ar","ph":"+54","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":2,"po":1,"fs":["Puma.png","Esso.png","YPF.png","AxionEnergy.png","Refinor.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"australia":{"c":"Oceania","dr":"Left","l":"English","cr":"Australian Dollar - AU$","dm":".au","ph":"+61","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Parade","Boulevard","Circuit","Terrace"],"bc":6,"pc":6,"po":1,"fs":["Puma.png","Caltex.png","ColesExpress.png","WoolworthsPetrol.png","UnitedPetroleum.png","LibertyOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"austria":{"c":"Europe","dr":"Right","l":"German","cr":"Euro - €","dm":".at","ph":"+43","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straße","Gasse","Platz","Allee","Ring","Weg","Hauptplatz","Promenade"],"bc":6,"pc":2,"po":1,"fs":["Esso.png","OMV.png","Jet.png","Eni.png","Avia.png","Agip.png","Hofer.png","AS24.png","Socar.png","Genol.png","Diskont.png","Avanti.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bangladesh":{"c":"Asia","dr":"Left","l":"Bengali","cr":"Bangladeshi Taka - ৳","dm":".bd","ph":"+880","ab":"bengali.png","rl":"White Outside - White Inside","sx":["Road","Lane","Avenue","Bazar","Sarani","Para","Rasta","Block","Mahalla"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"belgium":{"c":"Europe","dr":"Right","cr":"Euro - €","dm":".be","ph":"+32","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Laan","Weg","Plein","Dreef","Steeg","Hof","Kaai","Park"],"bc":3,"pc":2,"po":1,"fs":["Total.png","Esso.png","Lukoil.png","Texaco.png","Q8.png","Avia.png","AS24.png","BP.png","Power.png","Gabriels.png","MAES.png","OCTA+.png","Dats24.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bermuda":{"c":"North America","dr":"Left","l":"English","cr":"Bermudian dollar (BMD) - $","dm":".bm","ab":"latin.png","rl":"White Outside - White Inside","sx":["Lane","Avenue","Road","Circle","Court"],"bc":1,"pc":2,"po":1,"fs":["Esso.png","Rubis.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bhutan":{"c":"Asia","dr":"Left","l":"Dzongkha","cr":"Bhutanese Ngultrum - Nu.","dm":".bt","ph":"+975","ab":"tibetan.png","rl":"White Outside - White Inside","sx":["Theg","Zam","Street","Chhewog","Toe","Row","Village","Lane","Bridge"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bolivia":{"c":"South America","dr":"Right","cr":"Boliviano - Bs.","dm":".bo","ph":"+591","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Paseo","Carretera","Plaza","Jirón","Cuesta"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"botswana":{"c":"Africa","dr":"Left","cr":"Botswana Pula - P","dm":".bw","ph":"+267","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Close","Drive","Court","Circle"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Puma.png","Caltex.png","Engen.png","Galp.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"brazil":{"c":"South America","dr":"Right","l":"Portuguese","cr":"Brazilian Real - R$","dm":".br","ph":"+55","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Rua","Avenida","Estrada","Travessa","Alameda","Rodovia","Quadra","Praça","Largo","Passarela"],"bc":2,"pc":2,"po":1,"fs":["Esso.png","Ipiranga.png","Ale.png","BRDistribuidora.png","Raizen.png","Ultragaz.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bulgaria":{"c":"Europe","dr":"Right","l":"Bulgarian","cr":"Bulgarian lev - лв","dm":".bg","ph":"+359","ab":"bulgarian.png","rl":"White Outside - White Inside","sx":["улица","площад","булевард","квартал","парк","тракт","път","мост","алея","бул"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","OMV.png","EKO.png","Avia.png","Rompetrol.png","NIS.png","Astra.png","InsaOil.png","NaftexPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"cambodia":{"c":"Asia","dr":"Right","l":"Khmer","cr":"Cambodian Riel - ៛","dm":".kh","ph":"+855","ab":"khmer.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Sangkat","Phum","Thnou","Sang"],"bc":2,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"canada":{"c":"North America","dr":"Right","cr":"Canadian Dollar - C$","dm":".ca","ph":"+1","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":5,"pc":11,"po":1,"fs":["Esso.png","Irving.png","Petro-Canada.png","HuskyEnergy.png","Sunoco.png","Ultramar.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"chile":{"c":"South America","dr":"Right","l":"Spanish","cr":"Chilean Peso - $","dm":".cl","ph":"+56","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":2,"pc":3,"po":1,"fs":["Terpel.png","COPEC.png","Petrobras.png","ENEX.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"christmas-island":{"c":"Asia","dr":"Left","l":"English","cr":"Australian Dollar - $","dm":".cx","ph":"+61","ab":"latin.png","rl":"White Outside - White Inside","sx":["Road","Avenue","Drive","Way","Circuit","Terrace","Boulevard","Close","Parade","Lane"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"colombia":{"c":"South America","dr":"Right","l":"Spanish","cr":"Colombian Peso - $","dm":".co","ph":"+57","ab":"latin.png","rl":"White Outside - Yellow Inside / Yellow Outside - White Inside","sx":["Calle","Avenida","Carrera","Transversal","Diagonal","Peatonal","Vía","Autopista","Circunvalar","Cruce"],"bc":1,"pc":3,"po":1,"fs":["Puma.png","Esso.png","Texaco.png","Petrobras.png","Terpel.png","EcoPetrol.png","Biomax.png","BP.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"croatia":{"c":"Europe","dr":"Right","l":"Croatian","cr":"Kuna - kn","dm":".hr","ph":"+385","ab":"croatian.png","rl":"White Outside - White Inside / Red Outside - White Inside","sx":["Ulica","Trg","Avenija","Put","Cesta","Naselje","Skalini","Riva","Traversa","Promenada"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","OMV.png","INA.png","Firezone.png","Argos.png","Tifon.png","Crodux.png","Petrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"curacao":{"c":"North America","dr":"Right","cr":"Netherlands Antillean Guilder - ƒ","dm":".cw","ph":"+599","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Weg","Weggetje","Boulevard","Laan","Plein","Dreef","Kade","Steeg"],"bc":1,"pc":4,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"czech-republic":{"c":"Europe","dr":"Right","l":"Czech","cr":"Czech koruna - Kč","dm":".cz","ph":"+420","ab":"czech.png","rl":"White Outside - White Inside","sx":["Ulice","Náměstí","Třída","Sady","Alej","Nábřeží","Park","Rybník","Cesta","Most"],"bc":1,"pc":4,"po":1,"fs":["Texaco.png","OMV.png","MOL.png","Avia.png","Agip.png","Tesco.png","Benzina.png","Elda.png","PapOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"denmark":{"c":"Europe","dr":"Right","l":"Danish","cr":"Danish krone - kr","dm":".dk","ph":"+45","ab":"dano-norwegian.png","rl":"White Outside - White Inside","sx":["Vej","Gade","Plads","Torv","Allé","Stien","Stræde","Mark","Bakke","Holme"],"bc":3,"pc":5,"po":2,"fs":["Q8.png","Ingo.png","Uno-X.png","OK.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"dominican-republic":{"c":"North America","dr":"Right","l":"Spanish","cr":"Dominican Peso - RD$","dm":".do","ph":"+809","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Carretera","Callejón","Pasaje","Bulevar","Carretera","Cruce","Paraje","Sector"],"bc":1,"pc":2,"po":1,"fs":["Total.png","Esso.png","Texaco.png","Isla.png","Sunix.png","CoastalPetroleumDominicana.png","Propagas.png","Anadegas.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ecuador":{"c":"South America","dr":"Right","l":"Spanish","cr":"United States Dollar - $","dm":".ec","ph":"+593","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":2,"pc":5,"po":1,"fs":["Puma.png","Terpel.png","Petroecuador.png","Petromas.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"estonia":{"c":"Europe","dr":"Right","l":"Estonian","cr":"Euro - €","dm":".ee","ph":"+372","ab":"estonian.png","rl":"White Outside - White Inside","sx":["Tänav","Tee","Puiestee","Tänav","Tänav","Maantee","Tänav","Puiestee","Tänav"],"bc":1,"pc":3,"po":1,"fs":["Neste.png","Alexela.png","Olerex.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"eswatini":{"c":"Africa","dr":"Left","cr":"Swazi Lilangeni -  L","dm":".sz","ph":"+268","ab":"latin.png","rl":"Yellow Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Total.png","Puma.png","Caltex.png","Engen.png","Excel.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"faroe-islands":{"c":"Europe","dr":"Right","cr":"Faroese Krona - kr","dm":".fo","ph":"+298","ab":"latin.png","rl":"White Outside - White Inside","sx":["Gøta","Vegur","Stígur","Gøta","Vegur","Gøta","Vegur","Stígur","Gøta"],"bc":1,"pc":1,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"finland":{"c":"Europe","dr":"Right","l":"Finnish","cr":"Euro - €","dm":".fi","ph":"+358","ab":"finnish.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Katu","Tie","Kuja","Rinne","Polku","Aukio","Tori","Piha","Silta","Rinne"],"bc":1,"pc":3,"po":2,"fs":["Neste.png","Teboil.png","Tango.png","ABC.png","Seo.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"france":{"c":"Europe","dr":"Right","l":"French","cr":"Euro - €","dm":".fr","ph":"+33","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Impasse","Chemin","Place","Route","Cours","Quai","Passage"],"bc":2,"pc":5,"po":1,"fs":["Total.png","Esso.png","Q8.png","Eni.png","Avia.png","Tamoil.png","Rompetrol.png","Carrefour.png","AS24.png","E.Leclerc.png","Intermarche.png","SuperU.png","E.Leclerc.png","Auchan.png","Casino.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"germany":{"c":"Europe","dr":"Right","l":"German","cr":"Euro - €","dm":".de","ph":"+49","ab":"latin.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Straße","Weg","Platz","Allee","Ring","Gasse","Promenade","Hauptstraße","Pfad","An der"],"bc":1,"pc":4,"po":1,"fs":["Total.png","Esso.png","OMV.png","Aral.png","Avia.png","Orlen.png","Agip.png","Elan.png","Jet.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ghana":{"c":"Africa","dr":"Right","l":"English","cr":"Ghanaian cedi - GH₵","dm":".gh","ph":"+233","ab":"latin.png","rl":"White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":3,"po":1,"fs":["Total.png","Puma.png","Engen.png","Goil.png","StarOil.png","Total.png","AlliedOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"gibraltar":{"c":"Europe","dr":"Right","l":"English","cr":"Gibraltar Pound - £","dm":".gi","ph":"+350","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Cepsa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"greece":{"c":"Europe","dr":"Right","l":"Greek","cr":"Euro - €","dm":".gr","ph":"+30","ab":"greek.png","rl":"White Outside - White Inside","sx":["οδός","πλατεία","αγορά","αλλού","περιφέρειας","λεωφόρος","δρόμος","κάμπος","γέφυρα","βρύση"],"bc":1,"pc":1,"po":1,"fs":["EKO.png","Revoil.png","Elin.png","AegeanOil.png","SilkOil.png","Avin.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"greenland":{"c":"North America","dr":"Right","cr":"Danish krone - kr","dm":".gl","ph":"+299","ab":"latin.png","rl":"White Outside - White Inside","sx":["Vej","Gade","Plads","Torv","Allé","Sti","Grønland","Havn","Bakke"],"bc":1,"pc":2,"po":2,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"guam":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".gu","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Drive","Court","Circle","Close"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"guatemala":{"c":"North America","dr":"Right","l":"Spanish","cr":"Guatemalan quetzal - Q","dm":".gt","ph":"+502","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":4,"po":1,"fs":["Texaco.png","Puma.png","Uno.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"hungary":{"c":"Europe","dr":"Right","l":"Hungarian","cr":"Forint - Ft","dm":".hu","ph":"+36","ab":"hungarian.png","rl":"White Outside - White Inside","sx":["Utca","Tér","út","Körút","Sétány","Köz","Park","Híd","Tér"],"bc":2,"pc":3,"po":1,"fs":["Lukoil.png","OMV.png","MOL.png","Avia.png","AS24.png","Auchan.png","MOL.png","Agip.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"iceland":{"c":"Europe","dr":"Right","l":"Icelandic","cr":"Icelandic krÃ³na - kr","dm":".is","ph":"+354","ab":"icelandic.png","rl":"White Outside - White Inside","sx":["Gata","Braut","Vegur","Stígur","ás","Vík","Bakki","Höfði","Gata"],"bc":1,"pc":3,"po":1,"fs":["N1.png","Orkan.png","AO.png","Skeljungur.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"india":{"c":"Asia","dr":"Left","cr":"Indian Rupee - ₹","dm":".in","ph":"+91","ab":"devanagari.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":3,"pc":5,"po":1,"fs":["IndianOil.png","BharatPetroleum.png","HindustanPetroleum.png","ReliancePetroleum.png","EssarOil.png","Nayara.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"indonesia":{"c":"Asia","dr":"Left","l":"Indonesian","cr":"Indonesian Rupiah - Rp","dm":".id","ph":"+62","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Jalan","Gang","Lorong","Perumahan","Desa","Kecamatan","Kampung","Pemukiman","Paseban","Gang"],"bc":2,"pc":3,"po":1,"fs":["Caltex.png","Pertamina.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ireland":{"c":"Europe","dr":"Left","cr":"Euro - €","dm":".ie","ph":"+353","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["Esso.png","Texaco.png","Tesco.png","Maxol.png","Applegreen.png","EmoOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"isle-of-man":{"c":"Europe","dr":"Left","cr":"British Pound - £","dm":".im","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":1,"po":1,"fs":["Total.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"israel":{"c":"Asia","dr":"Right","cr":"Israeli new shekel - ₪","dm":".il","ph":"+972","ab":"hebrew.png","rl":"Yellow Outside - White Inside","sx":["רחוב","כיכר","בית","מסלול","סמטה","גינה","מעבר","שדרות"],"bc":1,"pc":3,"po":1,"fs":["PazOilCompany.png","Delek.png","Sonol.png","DorAlon.png","TenPetroleum.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"italy":{"c":"Europe","dr":"Right","l":"Italian","cr":"Euro - €","dm":".it","ph":"+39","ab":"latin.png","rl":"White Outside - White Inside","sx":["Via","Piazza","Strada","Viale","Corso","Vicolo","Piazzale","Lungomare","Salita","Traversa"],"bc":2,"pc":4,"po":1,"fs":["Esso.png","Q8.png","Eni.png","Repsol.png","Avia.png","Tamoil.png","Agip.png","IP.png","AS24.png","Auchan.png","Agip.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"japan":{"c":"Asia","dr":"Left","l":"Japanese","cr":"Yen -  ¥","dm":".jp","ph":"+81","ab":"japanese.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["通り","道","町","番地","丁目","ヶ町","ヶ丁目","地割","公園","橋"],"bc":3,"pc":4,"po":1,"fs":["ENEOS.png","Idemitsu.png","CosmoOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"jersey":{"c":"Europe","dr":"Left","cr":"British Pound - £","dm":".je","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":1,"po":1,"fs":["Total.png","Esso.png","Rubis.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"jordan":{"c":"Asia","dr":"Right","l":"Arabic","cr":"Jordanian Dinar - د.ا","dm":".jo","ph":"+962","ab":"arabic.png","rl":"Yellow Outside - White Inside","sx":["شارع","ميدان","ساحة","طريق","جادة","زقاق","حارة","جسر","دوار","ساحة"],"bc":1,"pc":3,"po":1,"fs":["Total.png","ManaseerOilGas.png","Total.png","JoPetro.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"kenya":{"c":"Africa","dr":"Left","cr":"Kenyan Shilling - KSh","dm":".ke","ph":"+254","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Lane","Avenue","Street","Way","Boulevard","Drive","Court","Circle","Close"],"bc":2,"pc":3,"po":1,"fs":["Total.png","OiLibya.png","VivoEnergy.png","KenolKobil.png","NationalOilCorporationofKenya.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"kyrgyzstan":{"c":"Asia","dr":"Right","cr":"Kyrgyzstani som - COM","dm":".kg","ph":"+996","ab":"cyrillic.png","rl":"White Outside - White Inside","sx":["улица","площадь","проспект","переулок","квартал","аллея","мост","тракт","бульвар"],"bc":1,"pc":4,"po":1,"fs":["EcoPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"laos":{"c":"Asia","dr":"Right","l":"Lao","cr":"Lao Kip - ₭","dm":".la","ph":"+856","ab":"lao.png","rl":"White Outside - White Inside","sx":["ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ"],"bc":1,"pc":1,"po":1,"fs":["PTT.png","LaoStateFuelCompany.png","PTT.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"latvia":{"c":"Europe","dr":"Right","l":"Latvian","cr":"Euro - €","dm":".lv","ph":"+371","ab":"latin.png","rl":"White Outside - White Inside","sx":["Iela","Laukums","Bulvāris","Gatve","Ceļš","Aleja","Promenāde","Tilts","Skvērs","Pļavas"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","Neste.png","Dinaz.png","AstarteNafta.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"lesotho":{"c":"Africa","dr":"Left","cr":"Lesotho Loti (LSL), South African Rand (ZAR) - L, R","dm":".ls","ph":"+266","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":3,"po":1,"fs":["Total.png","Engen.png","Excel.png","Total.png","Engen.png","Shell.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"lithuania":{"c":"Europe","dr":"Right","l":"Lithuanian","cr":"Euro - €","dm":".lt","ph":"+370","ab":"lithuanian.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Gatvė","Aikštė","Skveras","Kelias","Alėja","Parkas","Takas","Tiltas","Miestelis","Namų"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","Orlen.png","Neste.png","Viada.png","BalticPetroleum.png","Dujos.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"luxembourg":{"c":"Europe","dr":"Right","cr":"Euro - €","dm":".lu","ph":"+352","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Rond","point","Impasse","Allée","Chemin","Route","Quai"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Esso.png","Texaco.png","Q8.png","Aral.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"madagascar":{"c":"Africa","dr":"Right","cr":"Malagasy ariary - Ar","dm":".mg","ph":"+261","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Route","Impasse","Place","Voie","Carrefour","Quartier","Passage"],"bc":1,"pc":3,"po":1,"fs":["Total.png","BunkerOil.png","BestStasjon.png","Galana.png","Jovena.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"malaysia":{"c":"Asia","dr":"Left","l":"Malay","cr":"Malaysian ringgit - RM","dm":".my","ph":"+60","ab":"latin.png","rl":"White Outside - White Inside","sx":["Jalan","Lorong","Persiaran","Lebuh","Persimpangan","Taman","Kampung","Pekan","Jalan","Jalan"],"bc":4,"pc":4,"po":1,"fs":["Caltex.png","Petron.png","Neste.png","Petronas.png","BHPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"malta":{"c":"Europe","dr":"Left","cr":"Euro - €","dm":".mt","ph":"+356","ab":"latin.png","rl":"White Outside - White Inside","sx":["Triq","Square","Road","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["Enemed.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"mexico":{"c":"North America","dr":"Right","l":"Spanish","cr":"Mexican Peso - $","dm":".mx","ph":"+52","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Callejón","Camino","Boulevard","Paseo","Sendero","Corredor","Rambla"],"bc":1,"pc":20,"po":1,"fs":["Total.png","Arco.png","Pemex.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"monaco":{"c":"Europe","dr":"Right","l":"French","cr":"Euro  - €","dm":".mc","ph":"+377","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Impasse","Place","Quai","Promenade","Voie","Escalier","Terrasse"],"bc":1,"pc":4,"po":1,"fs":["Avia.png","Agip.png","Esso.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"mongolia":{"c":"Asia","dr":"Right","l":"Mongolian","cr":"Mongolian tögrög - ₮","dm":".mn","ph":"+976","ab":"cyrillic.png","rl":"White Outside - White Inside","sx":["гудамж","төлөө","хөдөлгөөнт","гудамж","гудамж","мөргөлдөөн","дөрөв","суурилуулалт","шалгаруулалт","өргөн"],"bc":1,"pc":2,"po":1,"fs":["MagnaiTrade.png","Shunkhlai.png","Petrovis.png","SodMongolGroup.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"montenegro":{"c":"Europe","dr":"Right","l":"Montenegrin","cr":"Euro - €","dm":".me","ph":"+382","ab":"montenegrin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Ulica","Trg","Bulevar","Put","Sokak","Ploča","Most","Aleja","Promenada","Ulaz"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","EKO.png","Petrol.png","INA.png","Teboil.png","EuroPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"netherlands":{"c":"Europe","dr":"Right","l":"Dutch","cr":"Euro - €","dm":".nl","ph":"+31","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Weg","Laan","Plein","Gracht","Hof","Dijk","Steeg","Park","Allee"],"bc":3,"pc":4,"po":1,"fs":["Total.png","Esso.png","Lukoil.png","Texaco.png","Q8.png","Avia.png","Tamoil.png","Gulf.png","Tango.png","Firezone.png","Argos.png","Sakko.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"new-zealand":{"c":"Oceania","dr":"Left","l":"English","cr":"New Zealand Dollar - NZ$","dm":".nz","ph":"+64","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":2,"fs":["Caltex.png","ZEnergy.png","Caltex.png","Mobil.png","Gull.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"nigeria":{"c":"Africa","dr":"Right","l":"English","cr":"Nigerian Naira - ₦","dm":".ng","ph":"+234","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Total.png","ForteOil.png","Oando.png","Mobil.png","Conoil.png","MRSOilNigeria.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"north-macedonia":{"c":"Europe","dr":"Right","l":"Macedonian","cr":"Macedonian Denar - ден","dm":".mk","ph":"+389","ab":"cyrillic.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["улица","плоштад","булевар","пат","камен","мост","алеја","тракт","проход","плоштад"],"bc":4,"pc":4,"po":1,"fs":["Lukoil.png","Makpetrol.png","OKTA.png","Gazprom.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"northern-mariana-islands":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".mp","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Avenue","Drive","Way","Boulevard","Circle","Court","Lane","Parkway","Plaza"],"bc":1,"pc":1,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"norway":{"c":"Europe","dr":"Right","l":"Norwegian","cr":"Norwegian Krone - kr","dm":".no","ph":"+47","ab":"dano-norwegian.png","rl":"White Outside - Yellow Inside","sx":["Gate","Vei","Plass","Allé","Veg","Stien","Torg","Gata","Bakken","Havn"],"bc":1,"pc":4,"po":1,"fs":["Esso.png","Uno-X.png","St1.png","YXEnergi.png","BunkerOil.png","BestStasjon.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"peru":{"c":"South America","dr":"Right","l":"Spanish","cr":"Sol - S/.","dm":".pe","ph":"+51","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":2,"po":1,"fs":["Repsol.png","Primax.png","Repsol.png","PetroPeru.png","Pecsa.png","GrifoMapco.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"philippines":{"c":"Asia","dr":"Right","cr":"Philippine Peso - ₱","dm":".ph","ph":"+63","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":2,"pc":4,"po":1,"fs":["Caltex.png","PTT.png","EasternPetroleum.png","Unioil.png","Petron.png","PhoenixPetroleum.png","Seaoil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"poland":{"c":"Europe","dr":"Right","l":"Polish","cr":"złoty - zł","dm":".pl","ph":"+48","ab":"polish.png","rl":"White Outside - White Inside","sx":["Ulica","Plac","Aleja","Skwer","Deptak","Rondo","Droga","Most","ścieżka","Pasaż"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Lukoil.png","Aral.png","Avia.png","Orlen.png","AS24.png","Tesco.png","Auchan.png","GrupaLotos.png","BP.png","CircleK.png","Statoil.png","PKNOrlen.png","Lotos.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"portugal":{"c":"Europe","dr":"Right","l":"Portuguese","cr":"Euro - €","dm":".pt","ph":"+351","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Rua","Avenida","Estrada","Travessa","Calçada","Beco","Largo","Praça","Rotunda","Passeio"],"bc":2,"pc":4,"po":1,"fs":["Repsol.png","Avia.png","Cepsa.png","Galp.png","Intermarche.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"puerto-rico":{"c":"North America","dr":"Right","cr":"United States Dollar - $","dm":".pr","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Carretera","Boulevard","Carr","Paseo","Camino","Pasaje","Autopista"],"bc":1,"pc":1,"po":1,"fs":["Total.png","Puma.png","Puma.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"qatar":{"c":"Asia","dr":"Right","l":"Arabic","cr":"Qatari Riyal - ﷼","dm":".qa","ph":"+974","ab":"arabic.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":3,"po":1,"fs":["Woqod.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"romania":{"c":"Europe","dr":"Right","l":"Romanian","cr":"Romanian Leu - lei","dm":".ro","ph":"+40","ab":"romanian.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Strada","Bulevard","Avenue","Piața","Calea","Aleea","Bulevardul","Strada","Pasaj","șoseaua"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","OMV.png","MOL.png","Gazprom.png","Petrom.png","Rompetrol.png","Socar.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"russia":{"c":"Asia","dr":"Right","l":"Russian","cr":"Russian Ruble - ₽","dm":".ru","ph":"+7","ab":"russian.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside","sx":["улица","площадь","проспект","переулок","аллея","бульвар","тракт","мост","переезд","шоссе"],"bc":2,"pc":4,"po":1,"fs":["Lukoil.png","Texaco.png","EcoPetrol.png","Gazprom.png","Rosneft.png","Tatneft.png","Surgutneftegas.png","Bashneft.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"rwanda":{"c":"Africa","dr":"Right","cr":"Rwandan Franc - FRw","dm":".rw","ph":"+250","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Ruko","Kimironko","Ibuye","Umujyi","Huye","Akarere","Umu","Cyerezo","Akagali","Mu"],"bc":1,"pc":4,"po":1,"fs":["Engen.png","SP.png","KenolKobil.png","HashiEnergy.png","MountMeru.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"san-marino":{"c":"Europe","dr":"Right","l":"Italian","cr":"Euro - €","dm":".sm","ph":"+378","ab":"latin.png","rl":"White Outside - White Inside","sx":["Via","Piazza","Strada","Viale","Corso","Vicolo","Passaggio","Salita","Piazzetta","Ramo"],"bc":1,"pc":1,"po":1,"fs":["Tamoil.png","Agip.png","IP.png","Eni.png","Q8.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"senegal":{"c":"Africa","dr":"Right","l":"French","cr":"West African CFA franc - CFA","dm":".sn","ph":"+221","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Voie","Impasse","Quartier","Pont","Carrefour","Passement"],"bc":3,"pc":2,"po":1,"fs":["Total.png","Puma.png","OiLibya.png","Elton.png","Petrosen.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"serbia":{"c":"Europe","dr":"Right","l":"Serbian","cr":"Serbian dinar - RSD","dm":".rs","ph":"+381","ab":"serbian.png","rl":"White Outside - White Inside","sx":["Ulica","Trg","Bulevar","Put","Sokak","Ploča","Most","Aleja","Promenada","Ulaz"],"bc":2,"pc":3,"po":1,"fs":["Lukoil.png","OMV.png","EKO.png","MOL.png","Avia.png","Gazprom.png","Petrol.png","NIS.png","EKO.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"singapore":{"c":"Asia","dr":"Left","cr":"Singapore Dollar - S$","dm":".sg","ph":"+65","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Road","Avenue","Lane","Street","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":3,"po":1,"fs":["Esso.png","Neste.png","OMV.png","SingaporePetroleumCompany.png","Caltex.png","SPC.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"slovakia":{"c":"Europe","dr":"Right","l":"Slovak","cr":"Euro - €","dm":".sk","ph":"+421","ab":"slovak.png","rl":"White Outside - White Inside","sx":["Ulica","Námestie","Cesta","Alej","Most","Park","Dvor","Rampa","Obchodná"],"bc":1,"pc":4,"po":1,"fs":["OMV.png","Orlen.png","Benzina.png","Tesco.png","Lotos.png","Slovnaft.png","Avia.png","Lukoil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"slovenia":{"c":"Europe","dr":"Right","l":"Slovene","cr":"Euro - €","dm":".si","ph":"+386","ab":"slovene.png","rl":"White Outside - White Inside","sx":["Ulica","Trg","Avenija","Cesta","Pot","Promenada","Most","Galerija","Nabrežje","Ploščad"],"bc":2,"pc":4,"po":1,"fs":["Q8.png","Agip.png","Petrol.png","Hofer.png","AS24.png","Tifon.png","MOL.png","OMV.png","Crodux.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"south-africa":{"c":"Africa","dr":"Left","cr":"South African Rand - R","dm":".za","ph":"+27","ab":"latin.png","rl":"Yellow Outside - White Inside / Red Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":9,"po":1,"fs":["Total.png","Puma.png","Caltex.png","BP.png","Chevron.png","Sasol.png","Engen.png","BP.png","Shell.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"south-korea":{"c":"Asia","dr":"Right","l":"Korean","cr":"South Korean won - ₩","dm":".kr","ph":"+82","ab":"hangul.png","rl":"White Outside - Yellow Inside","sx":["로","길","거리","로","길","거리","산길","길","길","로"],"bc":1,"pc":3,"po":1,"fs":["SKEnergy.png","GSCaltex.png","HyundaiOilbank.png","S-Oil.png","E1.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"spain":{"c":"Europe","dr":"Right","l":"Spanish","cr":"Euro - €","dm":".es","ph":"+34","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Calle","Avenida","Plaza","Paseo","Carretera","Camino","Boulevard","Ronda","Pueblo","Rambla"],"bc":2,"pc":4,"po":1,"fs":["Avia.png","Tamoil.png","Carrefour.png","AS24.png","E.Leclerc.png","BP.png","Galp.png","Repsol.png","Cepsa.png","Disa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"sri-lanka":{"c":"Asia","dr":"Left","cr":"Sri Lankan Rupee - Rs, රු","dm":".lk","ph":"+94","ab":"sinhala.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["පාර","පාර","පාර","පාර","පාර","පාර","පාර","පාර","පාර"],"bc":2,"pc":1,"po":1,"fs":["Caltex.png","CeylonPetroleumCorporation.png","LankaIOC.png","Laugfs.png","LitroGasLanka.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"sweden":{"c":"Europe","dr":"Right","l":"Swedish","cr":"Swedish Krona - kr","dm":".se","ph":"+46","ab":"swedish.png","rl":"White Outside - White Inside","sx":["Gatan","Vägen","Platsen","Gränden","Allén","Stråket","Vägen","Torg","Backen"],"bc":5,"pc":4,"po":1,"fs":["Total.png","Ingo.png","Q8.png","CircleK.png","Preem.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"switzerland":{"c":"Europe","dr":"Right","cr":"Swiss franc - CHF","dm":".ch","ph":"+41","ab":"latin.png","rl":"White Outside - White Inside","sx":["Strasse","Weg","Platz","Allee","Ring","Gasse","Promenade","Hauptstrasse","Pfad"],"bc":2,"pc":4,"po":1,"fs":["Esso.png","Eni.png","Agip.png","Socar.png","Avia.png","Tamoil.png","Migrol.png","Agrola.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"taiwan":{"c":"Asia","dr":"Right","l":"Mandarin Chinese","cr":"New Taiwan Dollar - NT$","dm":".tw","ph":"+886","ab":"chinese.png","rl":"White Outside - Yellow Inside","bc":1,"pc":3,"po":1,"fs":["CPCCorporation.png","FormosaPetrochemicalCorp.png","TaiwanSugarCorporation.png","Uni-President.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"thailand":{"c":"Asia","dr":"Left","l":"Thai","cr":"Thai Baht - ฿","dm":".th","ph":"+66","ab":"thai.png","rl":"White Outside - Yellow Inside","sx":["ถนน","ซอย","ตรอก","แยก","แม่น้ำ","ป่า","สะพาน","ทาง","พื้นที่","เขต"],"bc":1,"pc":4,"po":1,"fs":["Caltex.png","PTT.png","Esso.png","Bangchak.png","PTGEnergy.png","Susco.png","Jiffy.png","Pure.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"tunisia":{"c":"Africa","dr":"Right","l":"Arabic","cr":"Tunisian dinar - DT","dm":".tn","ph":"+216","ab":"arabic.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Voie","Impasse","Quartier","Pont","Carrefour","Passage"],"bc":1,"pc":2,"po":1,"fs":["Total.png","OiLibya.png","Staroil.png","Agil.png","VivoEnergy.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"turkey":{"c":"Europe","dr":"Right","l":"Turkish","cr":"Turkish Lira - ₺","dm":".tr","ph":"+90","ab":"turkish.png","rl":"White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Sokak","Cadde","Bulvar","Mahallesi","Caddesi","Sokağı","Köyü","Mevkii","Kavşak","çıkmaz"],"bc":2,"pc":4,"po":1,"fs":["Lukoil.png","Total.png","Opet.png","PetrolOfisi.png","BP.png","MOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"uganda":{"c":"Africa","dr":"Left","cr":"Ugandan shilling - USh","dm":".ug","ph":"+256","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","bc":1,"pc":3,"po":1,"fs":["Total.png","OiLibya.png","Total.png","VivoEnergy.png","OryxEnergies.png","HassPetroleum.png","Petrocity.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ukraine":{"c":"Europe","dr":"Right","l":"Ukrainian","cr":"Ukrainian Hryvnia - ₴","dm":".ua","ph":"+380","ab":"ukrainian.png","rl":"White Outside - White Inside","sx":["вулиця","площа","проспект","провулок","алея","бульвар","тракт","міст","перехрестя","шосе"],"bc":2,"pc":4,"po":1,"fs":["OKKO.png","WOG.png","Socar.png","KLO.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-arab-emirates":{"c":"Asia","dr":"Right","l":"Arabic","cr":"UAE dirham - د.إ","dm":".ae","ph":"+971","ab":"arabic.png","rl":"Yellow Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["ADNOC.png","ENOC.png","EPPCO.png","Emarat.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-kingdom":{"c":"Europe","dr":"Left","l":"English","cr":"Pound Sterling - £","dm":".uk","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":3,"pc":1,"po":1,"fs":["Esso.png","Texaco.png","Jet.png","Tesco.png","Morrisons.png","AsdaPetrolStations.png","SainsburysPetrolStations.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-states":{"c":"North America","dr":"Right","l":"English","cr":"US Dollar - $","dm":".us","ph":"+1","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":6,"pc":53,"po":1,"fs":["BP.png","Lukoil.png","CircleK.png","Gulf.png","Mobil.png","Costco.png","7-Eleven.png","Irving.png","Pemex.png","Wawa.png","Meijer.png","H-E-B.png","CaseysGeneralStores.png","Kroger.png","Albertsons.png","GiantEagle.png","Safeway.png","Target.png","Walmart.png","BJsWholesaleClub.png","SamsClub.png","MurphyUSA.png","QuikTrip.png","RaceTrac.png","Sheetz.png","HolidayStationstores.png","Maverik.png","KwikTrip.png","CumberlandFarms.png","LovesTravelStops.png","PilotFlyingJ.png","TravelCentersofAmerica.png","Exxon.png","Sunoco.png","Phillips66.png","Valero.png","MarathonPetroleum.png","Tesoro.png","Sinclair.png","Conoco.png","Hy-Vee.png","Mobil.png","RaceTrac.png","Shell.png","ExxonMobil.png","Texaco.png","Chevron.png","Arco.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"uruguay":{"c":"South America","dr":"Right","l":"Spanish","cr":"Uruguayan peso - $U","dm":".uy","ph":"+598","ab":"latin.png","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":3,"po":1,"fs":["Petrobras.png","ANCAP.png","DUCSA.png","Petrobras.png","Esso.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"us-virgin-islands":{"c":"North America","dr":"Left","l":"English","cr":"United States Dollar - $","dm":".vi","ab":"latin.png","rl":"White Outside - Yellow Inside","bc":1,"pc":1,"po":1,"fs":["Total.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"vietnam":{"c":"Asia","dr":"Right","l":"Vietnamese","cr":"Vietnamese dong - ₫","dm":".vn","ph":"+84","ab":"vietnamese.png","sx":["đường","Phố","Hẻm","Ngõ","Quận","đường","Hẻm","Quận","Phường","Khu"],"bc":1,"pc":2,"po":1,"fs":["Petrolimex.png","PVOil.png","BinhSonRefiningandPetrochemicalJSC.png","VietNamNationalGasolineCompany.png","DongThapPetroleumTradingImportExportCompany.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]}};
 
     function capitalizeWord(str) {
@@ -2256,7 +1213,6 @@ function getCountrySlug(countryName, countryCode) {
     function generatePlonkitRewrittenHtml(countryCode, countryName, state, coordinates) {
         const c = (countryCode || "").toUpperCase();
         const codeLower = c.toLowerCase() || "un";
-        const clue = c ? (GEO_CLUES[c] || null) : null;
         const slug = getCountrySlug(countryName, countryCode);
         const capSlug = capitalizeWord(slug);
         const geo = GEOMASTR_DATA[slug] || {};
@@ -2267,28 +1223,20 @@ function getCountrySlug(countryName, countryCode) {
         const lng = Number(coords.lng) || 0;
         const hasCoords = lat !== 0 || lng !== 0;
 
-        // Core metadata
-        const drive = (geo.dr || (clue ? clue.drive : "Right")).trim();
+        // Core metadata strictly from Geomastr (PC Optimized)
+        const drive = (geo.dr || "Right").trim();
         const continent = geo.c || "World";
-        const language = geo.l || (clue ? clue.tips : "");
+        const language = geo.l || "";
         const currency = geo.cr || "";
-        const domain = geo.dm || (clue ? clue.domain : ("." + codeLower));
+        const domain = geo.dm || ("." + codeLower);
         const phone = geo.ph || "";
-        const cam = clue ? (clue.cam || "Gen 3/4") : "Gen 3/4";
 
         const isLeft = drive.toLowerCase() === "left" || drive.toLowerCase() === "kiri";
         const driveColor = isLeft ? "#f59e0b" : "#38bdf8";
         const driveBg = isLeft ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)";
         const driveBorder = isLeft ? "rgba(245, 158, 11, 0.35)" : "rgba(56, 189, 248, 0.35)";
 
-        // Plonkit Clues
-        const bollard = clue ? (clue.bollard || "") : "";
-        const plate = clue ? (clue.plate || "") : "";
-        const pole = clue ? (clue.pole || "") : "";
-        const lines = clue ? (clue.lines || "") : "";
-        const tips = clue ? (clue.tips || "") : "";
-
-        // Geomastr Media URLs
+        // Geomastr Media URLs & Visual Guides
         const alphabetImgUrl = geo.ab ? `https://geomastr.com/assets/media/languages/${geo.ab}` : "";
         const roadLinesText = geo.rl || "";
         const suffixes = geo.sx || [];
@@ -2477,42 +1425,18 @@ function getCountrySlug(countryName, countryCode) {
         margin-bottom: 14px;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     }
-    .map-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 6px;
-        margin-top: 8px;
-        flex-wrap: wrap;
+    /* Geomastr Image Zoom & Lightbox */
+    .img-zoomable, .visual-card img, .img-alphabet, .img-fuel {
+        cursor: zoom-in;
+        transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
     }
-    .coord-pill {
-        background: rgba(56, 189, 248, 0.12);
-        border: 1px solid rgba(56, 189, 248, 0.25);
-        color: #38bdf8;
-        font-size: 10.5px;
-        font-weight: 600;
-        padding: 3px 7px;
-        border-radius: 5px;
-        font-family: monospace;
-    }
-    .btn-map-ext {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #f1f5f9;
-        font-size: 10.5px;
-        font-weight: 600;
-        padding: 3px 9px;
-        border-radius: 5px;
-        text-decoration: none;
-        transition: background 0.15s, border-color 0.15s;
-    }
-    .btn-map-ext:hover {
-        background: rgba(56, 189, 248, 0.2);
-        border-color: #38bdf8;
-        color: #ffffff;
+    .img-zoomable:hover, .visual-card:hover img, .img-alphabet:hover, .img-fuel:hover {
+        transform: scale(1.04);
+        filter: brightness(1.12);
+        box-shadow: 0 4px 14px rgba(56, 189, 248, 0.3);
     }
 
-    /* Plonkit Cards */
+    /* Cards */
     .card {
         background: #111827;
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2916,29 +1840,22 @@ function getCountrySlug(countryName, countryCode) {
         <!-- Top Meta Badges -->
         <div class="badges">
             <span class="badge badge-drive">🚗 Drive: ${drive}</span>
-            <span class="badge badge-cam">📷 ${cam}</span>
             <span class="badge badge-domain">🌐 ${domain}</span>
             ${continent ? `<span class="badge badge-cont">🏛️ ${continent}</span>` : ""}
             ${phone ? `<span class="badge badge-phone">📞 ${phone}</span>` : ""}
-            ${currency ? `<span class="badge badge-curr">💰 ${currency}</span>` : ""}
-        </div>
+            ${currency ? `<span class="badge badge-curr">💰 ${currency}</span>` : ""}</div>
 
         <!-- =================== 1. GUESS LOCATION MAP =================== -->
         <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map (Google Maps Country Overview)</div>
         ${hasCoords ? `
-            <div class="map-card">
-                <div id="hint-map" style="width: 100%; height: 190px; border-radius: 8px; overflow: hidden; background: #0f172a; position: relative;">
+            <div class="map-card" style="padding: 0; overflow: hidden; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.25);">
+                <div id="hint-map" style="width: 100%; height: 210px; background: #0f172a; position: relative;">
                     <iframe 
                         src="https://maps.google.com/maps?q=${lat},${lng}&hl=en&z=5&output=embed" 
                         style="width: 100%; height: 100%; border: none; display: block;" 
                         loading="lazy"
                         title="Google Maps Country Overview">
                     </iframe>
-                </div>
-                <div class="map-bar">
-                    <span class="coord-pill">📍 Lat: ${lat.toFixed(5)}</span>
-                    <span class="coord-pill">Lng: ${lng.toFixed(5)}</span>
-                    <a class="btn-map-ext" href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener noreferrer">Google Maps ↗</a>
                 </div>
             </div>
         ` : `
@@ -2952,55 +1869,21 @@ function getCountrySlug(countryName, countryCode) {
             ${renderIrisSectionContent(panoClues, countryClues, isLoading, countryName)}
         </div>
 
-        <!-- =================== 3. GENERAL COUNTRY CLUES (PLONKIT & GEOMASTR) =================== -->
-        <div class="section-divider section-divider-meta">📚 3. General Country Clues (Plonkit & Geomastr)</div>
-
-        <!-- 3A. PLONKIT GUIDES -->
-        ${bollard ? `
-            <div class="card">
-                <div class="card-title">🪧 BOLLARDS & REFLECTORS (PLONKIT)</div>
-                <div class="card-body">${bollard}</div>
-            </div>
-        ` : ""}
-
-        ${plate ? `
-            <div class="card">
-                <div class="card-title">🚘 LICENSE PLATES (PLONKIT)</div>
-                <div class="card-body">${plate}</div>
-            </div>
-        ` : ""}
-
-        ${pole ? `
-            <div class="card">
-                <div class="card-title">🪵 UTILITY POLES & INFRASTRUCTURE (PLONKIT)</div>
-                <div class="card-body">${pole}</div>
-            </div>
-        ` : ""}
-
-        ${lines ? `
-            <div class="card">
-                <div class="card-title">🛣️ ROAD LINES & MARKINGS (PLONKIT)</div>
-                <div class="card-body">${lines}</div>
-            </div>
-        ` : ""}
-
-        ${tips ? `
-            <div class="card tips-card">
-                <div class="card-title">💡 KEY META TIPS (PLONKIT)</div>
-                <div class="card-body">${tips}</div>
-            </div>
-        ` : ""}
-
-        <!-- 3B. GEOMASTR VISUAL & ENVIRONMENTAL GUIDE -->
-        <div class="sub-divider">📸 Geomastr Visual & Environmental Guide</div>
+        <!-- =================== 3. GENERAL COUNTRY CLUES (GEOMASTR) =================== -->
+        <div class="section-divider section-divider-meta">📚 3. General Country Clues (Geomastr)</div>
 
         ${alphabetImgUrl ? `
             <div class="card">
                 <div class="card-title">🔤 LANGUAGE & ALPHABET</div>
-                <div class="card-body">Official language: <strong>${language}</strong></div>
-                <img class="img-alphabet" src="${alphabetImgUrl}" alt="Alphabet chart" onerror="this.style.display='none'">
+                <div class="card-body">Official language: <strong>${language}</strong> <span style="font-size:10.5px; color:#38bdf8;">(Click image to zoom)</span></div>
+                <img class="img-alphabet img-zoomable" src="${alphabetImgUrl}" alt="${countryName} Alphabet chart" onerror="this.style.display='none'">
             </div>
-        ` : ""}
+        ` : (language ? `
+            <div class="card">
+                <div class="card-title">🔤 LANGUAGE</div>
+                <div class="card-body">Official language: <strong>${language}</strong></div>
+            </div>
+        ` : "")}
 
         ${suffixes.length > 0 ? `
             <div class="card">
@@ -3031,19 +1914,19 @@ function getCountrySlug(countryName, countryCode) {
                 <div class="card-title">🪧 AUTHENTIC BOLLARD PHOTOS</div>
                 <div class="visual-gallery">
                     <div class="visual-card" id="geo-bollard-1">
-                        <img class="img-bollard" src="https://geomastr.com/assets/media/bollards/${slug}.jpg" alt="Bollard 1" onerror="document.getElementById('geo-bollard-1').style.display='none'">
-                        <div class="card-caption">Type A</div>
+                        <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}.jpg" alt="${countryName} Bollard Type A" onerror="document.getElementById('geo-bollard-1').style.display='none'">
+                        <div class="card-caption">Type A 🔍</div>
                     </div>
                     ${bollardCount >= 2 ? `
                         <div class="visual-card" id="geo-bollard-2">
-                            <img class="img-bollard" src="https://geomastr.com/assets/media/bollards/${slug}2.jpg" alt="Bollard 2" onerror="document.getElementById('geo-bollard-2').style.display='none'">
-                            <div class="card-caption">Type B</div>
+                            <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}2.jpg" alt="${countryName} Bollard Type B" onerror="document.getElementById('geo-bollard-2').style.display='none'">
+                            <div class="card-caption">Type B 🔍</div>
                         </div>
                     ` : ""}
                     ${bollardCount >= 3 ? `
                         <div class="visual-card" id="geo-bollard-3">
-                            <img class="img-bollard" src="https://geomastr.com/assets/media/bollards/${slug}3.jpg" alt="Bollard 3" onerror="document.getElementById('geo-bollard-3').style.display='none'">
-                            <div class="card-caption">Type C</div>
+                            <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}3.jpg" alt="${countryName} Bollard Type C" onerror="document.getElementById('geo-bollard-3').style.display='none'">
+                            <div class="card-caption">Type C 🔍</div>
                         </div>
                     ` : ""}
                 </div>
@@ -3054,19 +1937,19 @@ function getCountrySlug(countryName, countryCode) {
                 <div class="card-title">🚘 AUTHENTIC LICENSE PLATES</div>
                 <div class="visual-gallery" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
                     <div class="visual-card" id="geo-plate-1">
-                        <img class="img-plate" src="https://geomastr.com/assets/media/licenseplates/${capSlug}.jpg" alt="Plate 1" onerror="document.getElementById('geo-plate-1').style.display='none'">
-                        <div class="card-caption">Standard</div>
+                        <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}.jpg" alt="${countryName} Standard Plate" onerror="document.getElementById('geo-plate-1').style.display='none'">
+                        <div class="card-caption">Standard 🔍</div>
                     </div>
                     ${plateCount >= 2 ? `
                         <div class="visual-card" id="geo-plate-2">
-                            <img class="img-plate" src="https://geomastr.com/assets/media/licenseplates/${capSlug}2.jpg" alt="Plate 2" onerror="document.getElementById('geo-plate-2').style.display='none'">
-                            <div class="card-caption">Alternate</div>
+                            <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}2.jpg" alt="${countryName} Alternate Plate" onerror="document.getElementById('geo-plate-2').style.display='none'">
+                            <div class="card-caption">Alternate 🔍</div>
                         </div>
                     ` : ""}
                     ${plateCount >= 3 ? `
                         <div class="visual-card" id="geo-plate-3">
-                            <img class="img-plate" src="https://geomastr.com/assets/media/licenseplates/${capSlug}3.jpg" alt="Plate 3" onerror="document.getElementById('geo-plate-3').style.display='none'">
-                            <div class="card-caption">Commercial / Old</div>
+                            <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}3.jpg" alt="${countryName} Plate Type 3" onerror="document.getElementById('geo-plate-3').style.display='none'">
+                            <div class="card-caption">Commercial / Old 🔍</div>
                         </div>
                     ` : ""}
                 </div>
@@ -3078,38 +1961,38 @@ function getCountrySlug(countryName, countryCode) {
                 <div class="visual-gallery" style="grid-template-columns: repeat(3, 1fr);">
                     ${hasStop ? `
                         <div class="visual-card" id="geo-sign-stop">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/stop/${slug}.svg" alt="Stop Sign" onerror="document.getElementById('geo-sign-stop').style.display='none'">
-                            <div class="card-caption">Stop</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/stop/${slug}.svg" alt="${countryName} Stop Sign" onerror="document.getElementById('geo-sign-stop').style.display='none'">
+                            <div class="card-caption">Stop 🔍</div>
                         </div>
                     ` : ""}
                     ${hasYield ? `
                         <div class="visual-card" id="geo-sign-yield">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/yields/${slug}_1.svg" alt="Yield Sign" onerror="document.getElementById('geo-sign-yield').style.display='none'">
-                            <div class="card-caption">Yield</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/yields/${slug}_1.svg" alt="${countryName} Yield Sign" onerror="document.getElementById('geo-sign-yield').style.display='none'">
+                            <div class="card-caption">Yield 🔍</div>
                         </div>
                     ` : ""}
                     ${hasPedestrian ? `
                         <div class="visual-card" id="geo-sign-ped">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/pedestrians/${slug}.svg" alt="Pedestrian Sign" onerror="document.getElementById('geo-sign-ped').style.display='none'">
-                            <div class="card-caption">Crossing</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/pedestrians/${slug}.svg" alt="${countryName} Pedestrian Crossing" onerror="document.getElementById('geo-sign-ped').style.display='none'">
+                            <div class="card-caption">Crossing 🔍</div>
                         </div>
                     ` : ""}
                     ${hasRoundabout ? `
                         <div class="visual-card" id="geo-sign-round">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/round/${slug}.svg" alt="Roundabout" onerror="document.getElementById('geo-sign-round').style.display='none'">
-                            <div class="card-caption">Roundabout</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/round/${slug}.svg" alt="${countryName} Roundabout Sign" onerror="document.getElementById('geo-sign-round').style.display='none'">
+                            <div class="card-caption">Roundabout 🔍</div>
                         </div>
                     ` : ""}
                     ${hasBend ? `
                         <div class="visual-card" id="geo-sign-bend">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/curve/${slug}.svg" alt="Curve" onerror="document.getElementById('geo-sign-bend').style.display='none'">
-                            <div class="card-caption">Curve</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/curve/${slug}.svg" alt="${countryName} Curve Sign" onerror="document.getElementById('geo-sign-bend').style.display='none'">
+                            <div class="card-caption">Curve 🔍</div>
                         </div>
                     ` : ""}
                     ${hasChevron ? `
                         <div class="visual-card" id="geo-sign-chev">
-                            <img class="img-sign" src="https://geomastr.com/assets/media/streetsigns/chevrons/${slug}_1.svg" alt="Chevron" onerror="document.getElementById('geo-sign-chev').style.display='none'">
-                            <div class="card-caption">Chevron</div>
+                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/chevrons/${slug}_1.svg" alt="${countryName} Chevron Sign" onerror="document.getElementById('geo-sign-chev').style.display='none'">
+                            <div class="card-caption">Chevron 🔍</div>
                         </div>
                     ` : ""}
                 </div>
@@ -3121,8 +2004,8 @@ function getCountrySlug(countryName, countryCode) {
                     <div class="card-title">🪵 POSTAL & UTILITY SILHOUETTE</div>
                     <div class="visual-gallery" style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));">
                         <div class="visual-card" id="geo-post-1">
-                            <img class="img-post" src="https://geomastr.com/assets/media/post/${slug}.svg" alt="Postal Utility" onerror="document.getElementById('geo-post-1').style.display='none'">
-                            <div class="card-caption">Utility Pole</div>
+                            <img class="img-post img-zoomable" src="https://geomastr.com/assets/media/post/${slug}.svg" alt="${countryName} Postal Utility Pole" onerror="document.getElementById('geo-post-1').style.display='none'">
+                            <div class="card-caption">Utility Pole 🔍</div>
                             <div class="card-subtext">National design</div>
                         </div>
                     </div>
@@ -3134,7 +2017,7 @@ function getCountrySlug(countryName, countryCode) {
                 <div class="card">
                     <div class="card-title">⛽ COMMON FUEL STATIONS</div>
                     <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
-                        ${geo.fs.map(f => `<img class="img-fuel" src="https://geomastr.com/assets/media/companies/${f}" alt="${f}" onerror="this.style.display='none'">`).join("")}
+                        ${geo.fs.map(f => `<img class="img-fuel img-zoomable" src="https://geomastr.com/assets/media/companies/${f}" alt="${f}" title="${f} (Click to zoom)" onerror="this.style.display='none'">`).join("")}
                     </div>
                 </div>
             ` : ""}
@@ -3144,13 +2027,42 @@ function getCountrySlug(countryName, countryCode) {
         <div style="text-align: center; padding: 36px 12px; color: #94a3b8;">
             <div style="font-size: 32px; margin-bottom: 10px;">🧭</div>
             <div style="font-size: 14px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Awaiting Round Location...</div>
-            <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Map coordinates, official GeoGuessr Iris clues, and comprehensive Plonkit & Geomastr country visual guides will automatically load as soon as Street View coordinates are detected.</div>
+            <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Map overview, official GeoGuessr Iris clues, and comprehensive Geomastr country visual guides will automatically load as soon as Street View coordinates are detected.</div>
         </div>
     `}
 
     <div class="footer-note">
         Press <strong style="color: #38bdf8;">H</strong> on keyboard to hide / show this guide
     </div>
+    <!-- Lightbox Modal for zooming any Geomastr Image -->
+    <div id="geomastr-lightbox" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.88); backdrop-filter:blur(8px); z-index:99999; flex-direction:column; align-items:center; justify-content:center; padding:16px; box-sizing:border-box; cursor:zoom-out;" onclick="this.style.display='none'">
+        <div style="position:absolute; top:14px; right:18px; font-size:20px; color:#cbd5e1; cursor:pointer; font-weight:700; background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.2); width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(0,0,0,0.6);" onclick="document.getElementById('geomastr-lightbox').style.display='none'">✕</div>
+        <div style="max-width:92%; max-height:85%; display:flex; flex-direction:column; align-items:center; justify-content:center;" onclick="event.stopPropagation()">
+            <img id="lightbox-img" src="" style="max-width:100%; max-height:75vh; object-fit:contain; border-radius:10px; box-shadow:0 12px 48px rgba(0,0,0,0.9); border:1px solid rgba(56,189,248,0.4); background:#090e1a; padding:10px;">
+            <div id="lightbox-caption" style="margin-top:10px; color:#f1f5f9; font-size:12px; font-weight:600; text-align:center; text-shadow:0 2px 6px rgba(0,0,0,0.9); background:rgba(15,23,42,0.85); padding:4px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.1);"></div>
+        </div>
+    </div>
+
+    <script>
+        function openLightbox(src, caption) {
+            var lb = document.getElementById('geomastr-lightbox');
+            var img = document.getElementById('lightbox-img');
+            var cap = document.getElementById('lightbox-caption');
+            if (lb && img) {
+                img.src = src;
+                if (cap) cap.textContent = caption || '';
+                lb.style.display = 'flex';
+            }
+        }
+        document.addEventListener('click', function(e) {
+            var t = e.target;
+            if (t && t.tagName === 'IMG' && (t.classList.contains('img-zoomable') || t.classList.contains('img-alphabet') || t.classList.contains('img-fuel') || t.closest('.visual-card'))) {
+                e.preventDefault();
+                e.stopPropagation();
+                openLightbox(t.src, t.alt || t.title || 'Geomastr Image');
+            }
+        });
+    </script>
 </body>
 </html>`;
     }
