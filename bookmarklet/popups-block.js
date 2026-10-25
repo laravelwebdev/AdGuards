@@ -1033,7 +1033,7 @@
     document.addEventListener("touchend", handleTermsTrigger, true);
     document.addEventListener("pointerdown", handleTermsTrigger, true);
 
-        // =================== Plonkit Clue Assistant (Shortcut H) ===================
+            // =================== Plonkit Clue Assistant (Iframe Rewritten HTML) ===================
     const GEO_CLUES = {
     "DK": {
         "drive": "Kanan",
@@ -1738,9 +1738,7 @@
 };
 
     let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
-    let autoSyncPlonkit = JSON.parse(localStorage.getItem("autoSyncPlonkit")) !== false;
-    let plonkitPanelEl = null;
-    let plonkitCompanionWindow = null;
+    let plonkitIframeEl = null;
     let lastRenderedSlug = "";
 
     function getFlagEmoji(code) {
@@ -1791,224 +1789,388 @@
             .replace(/^-+|-+$/g, "");
     }
 
-    function openPlonkitCompanion(slug) {
-        if (!slug) return;
-        const targetUrl = "https://www.plonkit.net/" + slug;
-        const w = Math.min(520, Math.floor(window.screen.availWidth * 0.42));
-        const h = window.screen.availHeight;
-        const left = Math.max(0, window.screen.availWidth - w);
-        const top = 0;
-        try {
-            if (plonkitCompanionWindow && !plonkitCompanionWindow.closed) {
-                plonkitCompanionWindow.location.href = targetUrl;
-                plonkitCompanionWindow.focus();
-            } else {
-                plonkitCompanionWindow = window.open(
-                    targetUrl,
-                    "AdGuardsPlonkitCompanion",
-                    `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes,status=no`
-                );
-            }
-        } catch (_) {
-            window.open(targetUrl, "_blank");
+    function generatePlonkitRewrittenHtml(countryCode, countryName, state) {
+        const c = (countryCode || "").toUpperCase();
+        const codeLower = c.toLowerCase() || "un";
+        const clue = c ? (GEO_CLUES[c] || null) : null;
+        const drive = clue ? (clue.drive || "Kanan") : "Kanan";
+        const cam = clue ? (clue.cam || "Gen 3/4") : "Gen 3/4";
+        const domain = clue ? (clue.domain || ("." + codeLower)) : ("." + codeLower);
+        const bollard = clue ? (clue.bollard || "") : "";
+        const plate = clue ? (clue.plate || "") : "";
+        const pole = clue ? (clue.pole || "") : "";
+        const lines = clue ? (clue.lines || "") : "";
+        const tips = clue ? (clue.tips || "") : "";
+
+        const isLeft = drive.toLowerCase().includes("kiri");
+        const driveColor = isLeft ? "#f59e0b" : "#38bdf8";
+        const driveBg = isLeft ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)";
+        const driveBorder = isLeft ? "rgba(245, 158, 11, 0.35)" : "rgba(56, 189, 248, 0.35)";
+
+        // Visual plate mockup generator
+        let plateVisual = "";
+        if (["DK", "SE", "NO", "FI", "DE", "FR", "ES", "PT", "IT", "PL", "CZ", "SK", "HU", "RO", "BG", "GR", "HR", "SI", "EE", "LV", "LT", "IE", "AT"].includes(c)) {
+            const borderColor = (c === "DK") ? "#dc2626" : "#1e293b";
+            let sampleText = "AB 12 345";
+            if (c === "DK") sampleText = "DK 48 291";
+            else if (c === "SE") sampleText = "ABC 12D";
+            else if (c === "FR") sampleText = "AB-123-CD";
+            else if (c === "IT") sampleText = "AB 123CD";
+            else if (c === "PL") sampleText = "WI 12345";
+            else if (c === "DE") sampleText = "B AB 1234";
+
+            plateVisual = `
+                <div style="display: inline-flex; align-items: center; background: #ffffff; border: 2px solid ${borderColor}; border-radius: 4px; height: 32px; padding: 0 4px; font-family: monospace; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,0.5); margin-top: 6px;">
+                    <div style="background: #1d4ed8; color: #fbbf24; font-size: 7px; width: 14px; height: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 2px; margin-right: 6px;">
+                        <span>★</span><span style="color: #fff; font-size: 8px; font-weight: 800;">${c}</span>
+                    </div>
+                    <span style="color: #111827; font-size: 13px; letter-spacing: 2px;">${sampleText}</span>
+                    ${["FR", "IT"].includes(c) ? `<div style="background: #1d4ed8; width: 12px; height: 26px; border-radius: 2px; margin-left: 6px;"></div>` : ""}
+                </div>
+            `;
+        } else if (c === "NL") {
+            plateVisual = `
+                <div style="display: inline-flex; align-items: center; background: #fbbf24; border: 2px solid #000; border-radius: 4px; height: 32px; padding: 0 4px; font-family: monospace; font-weight: 700; margin-top: 6px;">
+                    <div style="background: #1d4ed8; color: #fff; font-size: 7px; width: 14px; height: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 2px; margin-right: 6px;">
+                        <span>★</span><span style="color: #fff; font-size: 8px; font-weight: 800;">NL</span>
+                    </div>
+                    <span style="color: #000; font-size: 13px; letter-spacing: 2px;">99-XX-XX</span>
+                </div>
+            `;
+        } else if (c === "JP") {
+            plateVisual = `
+                <div style="display: flex; gap: 8px; margin-top: 6px;">
+                    <div style="background: #fff; border: 2px solid #15803d; border-radius: 4px; height: 34px; width: 70px; padding: 1px 4px; font-size: 9px; color: #15803d; font-weight: 700; text-align: center;">品川 500<br><span style="font-size: 12px;">12-34</span></div>
+                    <div style="background: #facc15; border: 2px solid #000; border-radius: 4px; height: 34px; width: 70px; padding: 1px 4px; font-size: 9px; color: #000; font-weight: 700; text-align: center;">新宿 580<br><span style="font-size: 12px;">56-78</span></div>
+                </div>
+            `;
+        } else if (c === "ID") {
+            plateVisual = `
+                <div style="background: #18181b; border: 1.5px solid #fff; border-radius: 4px; height: 34px; padding: 2px 10px; display: inline-flex; flex-direction: column; justify-content: center; font-family: monospace; font-weight: 700; color: #fff; margin-top: 6px;">
+                    <span style="font-size: 12px; letter-spacing: 1.5px;">B 1234 ABC</span>
+                    <span style="font-size: 8px; color: #a1a1aa; letter-spacing: 1px;">08 • 29</span>
+                </div>
+            `;
+        } else if (c === "IL") {
+            plateVisual = `
+                <div style="background: #facc15; border: 2px solid #000; border-radius: 4px; height: 30px; width: 130px; display: inline-flex; align-items: center; justify-content: center; font-family: monospace; font-weight: 700; font-size: 13px; color: #000; margin-top: 6px;">
+                    12-345-67
+                </div>
+            `;
         }
+
+        // Visual bollard illustration generator
+        let bollardVisual = "";
+        if (c === "DK") {
+            bollardVisual = `
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
+                    <div style="width: 24px; height: 50px; background: #e2e8f0; border-radius: 4px 4px 0 0; position: relative; border: 1px solid #94a3b8; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
+                        <div style="position: absolute; top: 4px; left: 3px; right: 3px; height: 12px; background: #dc2626; border-radius: 2px;"></div>
+                        <div style="position: absolute; bottom: 0; left: 0; right: 0; height: 6px; background: #334155;"></div>
+                    </div>
+                    <span style="font-size: 11px; color: #94a3b8;">Strip merah atas pada tiang putih</span>
+                </div>
+            `;
+        } else if (c === "AU") {
+            bollardVisual = `
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
+                    <div style="width: 22px; height: 50px; background: #f8fafc; border-radius: 3px 3px 0 0; position: relative; border: 1px solid #cbd5e1; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
+                        <div style="position: absolute; top: 8px; left: 6px; right: 6px; height: 16px; background: #dc2626; border-radius: 2px;"></div>
+                    </div>
+                    <span style="font-size: 11px; color: #94a3b8;">Reflektor merah depan, putih belakang</span>
+                </div>
+            `;
+        } else if (c === "PL") {
+            bollardVisual = `
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
+                    <div style="width: 24px; height: 50px; background: #f8fafc; border-radius: 3px 3px 0 0; position: relative; border: 1px solid #cbd5e1; box-shadow: 0 2px 5px rgba(0,0,0,0.4);">
+                        <div style="position: absolute; top: 0; left: 0; right: 0; height: 18px; background: #dc2626;"></div>
+                        <div style="position: absolute; top: 6px; left: 7px; right: 7px; height: 6px; background: #ffffff; border-radius: 1px;"></div>
+                    </div>
+                    <span style="font-size: 11px; color: #94a3b8;">Pita merah lebar khas Polandia</span>
+                </div>
+            `;
+        }
+
+        // Visual road line generator
+        let roadVisual = "";
+        if (lines) {
+            const isYellowCenter = ["NO", "US", "CA", "JP", "ID", "TH", "BR", "CO", "PE"].includes(c);
+            const centerColor = isYellowCenter ? "#facc15" : "#ffffff";
+            const isDashedOuter = (c === "DK" || c === "SE");
+            const outerStyle = isDashedOuter ? "dashed" : "solid";
+
+            roadVisual = `
+                <div style="margin-top: 8px; height: 26px; background: #1e293b; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="height: 100%; border-left: 2px ${outerStyle} #ffffff;"></div>
+                    <div style="height: 100%; border-left: 2px dashed ${centerColor};"></div>
+                    <div style="height: 100%; border-right: 2px ${outerStyle} #ffffff;"></div>
+                </div>
+            `;
+        }
+
+        return `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+    ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.6); }
+    body {
+        background: #090e1a;
+        color: #f1f5f9;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        padding: 16px;
+        font-size: 13px;
+        line-height: 1.5;
+        user-select: none;
+    }
+    .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 14px;
+        position: sticky;
+        top: 0;
+        background: #090e1a;
+        z-index: 10;
+    }
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .flag {
+        width: 44px;
+        height: 30px;
+        border-radius: 4px;
+        object-fit: cover;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+        border: 1px solid rgba(255,255,255,0.15);
+    }
+    .title-group h1 {
+        font-size: 16px;
+        font-weight: 700;
+        color: #ffffff;
+        line-height: 1.2;
+    }
+    .title-group .state {
+        font-size: 11px;
+        color: #94a3b8;
+    }
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .badge-h {
+        background: rgba(56, 189, 248, 0.15);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+        color: #38bdf8;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+    .btn-close {
+        background: none;
+        border: none;
+        color: #94a3b8;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 2px 6px;
+        line-height: 1;
+        transition: color 0.15s;
+    }
+    .btn-close:hover { color: #ffffff; }
+    .badges {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+    }
+    .badge {
+        padding: 4px 9px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .badge-drive {
+        background: ${driveBg};
+        color: ${driveColor};
+        border: 1px solid ${driveBorder};
+    }
+    .badge-cam {
+        background: rgba(255, 255, 255, 0.06);
+        color: #e2e8f0;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .badge-domain {
+        background: rgba(56, 189, 248, 0.1);
+        color: #38bdf8;
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        font-family: monospace;
+    }
+    .card {
+        background: #111827;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 11px 13px;
+        margin-bottom: 9px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .card-title {
+        font-size: 11px;
+        font-weight: 700;
+        color: #38bdf8;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+    .card-body {
+        color: #cbd5e1;
+        font-size: 12px;
+        line-height: 1.5;
+    }
+    .tips-card {
+        background: rgba(56, 189, 248, 0.06);
+        border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+    .tips-card .card-title { color: #38bdf8; }
+    .tips-card .card-body { color: #f8fafc; font-weight: 500; }
+    .footer-note {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 10.5px;
+        color: #64748b;
+        text-align: center;
+    }
+</style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <img class="flag" src="https://flagcdn.com/w80/${codeLower}.png" alt="${countryName}" onerror="this.style.display='none'">
+            <div class="title-group">
+                <h1>${countryName ? countryName : "Menunggu Deteksi..."}</h1>
+                ${state ? `<div class="state">${state}</div>` : ""}
+            </div>
+        </div>
+        <div class="header-actions">
+            <span class="badge-h">[H]</span>
+            <button class="btn-close" onclick="window.parent.postMessage({type:'ADGUARDS_CLOSE_IFRAME'}, '*')" title="Tutup (Tekan H)">✕</button>
+        </div>
+    </div>
+
+    ${countryName ? `
+        <div class="badges">
+            <span class="badge badge-drive">🚗 Lajur: ${drive}</span>
+            <span class="badge badge-cam">📷 ${cam}</span>
+            <span class="badge badge-domain">🌐 ${domain}</span>
+        </div>
+
+        ${bollard ? `
+            <div class="card">
+                <div class="card-title">🪧 BOLLARD & REFLEKTOR</div>
+                <div class="card-body">${bollard}</div>
+                ${bollardVisual}
+            </div>
+        ` : ""}
+
+        ${plate ? `
+            <div class="card">
+                <div class="card-title">🚘 PLAT NOMOR</div>
+                <div class="card-body">${plate}</div>
+                ${plateVisual}
+            </div>
+        ` : ""}
+
+        ${pole ? `
+            <div class="card">
+                <div class="card-title">🪵 TIANG LISTRIK</div>
+                <div class="card-body">${pole}</div>
+            </div>
+        ` : ""}
+
+        ${lines ? `
+            <div class="card">
+                <div class="card-title">🛣️ MARKA JALAN</div>
+                <div class="card-body">${lines}</div>
+                ${roadVisual}
+            </div>
+        ` : ""}
+
+        ${tips ? `
+            <div class="card tips-card">
+                <div class="card-title">💡 PETUNJUK KUNCI (PLONKIT META)</div>
+                <div class="card-body">${tips}</div>
+            </div>
+        ` : ""}
+    ` : `
+        <div style="text-align: center; padding: 30px 10px; color: #94a3b8;">
+            <div style="font-size: 28px; margin-bottom: 8px;">🧭</div>
+            <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 4px;">Menunggu Lokasi Ronde...</div>
+            <div style="font-size: 11px; color: #64748b;">Clue Plonkit akan ditulis ulang secara otomatis begitu koordinat Street View dimuat.</div>
+        </div>
+    `}
+
+    <div class="footer-note">
+        Tekan <strong style="color: #38bdf8;">H</strong> di keyboard untuk menyembunyikan / menampilkan iframe
+    </div>
+</body>
+</html>`;
     }
 
-    function createOrGetPlonkitPanel() {
-        let panel = document.getElementById("__adguards_plonkit_panel");
-        if (panel) return panel;
+    function createOrGetPlonkitIframe() {
+        let iframe = document.getElementById("__adguards_plonkit_iframe");
+        if (iframe) return iframe;
 
-        panel = document.createElement("div");
-        panel.id = "__adguards_plonkit_panel";
-        panel.style.position = "fixed";
-        panel.style.top = "64px";
-        panel.style.right = "16px";
-        panel.style.width = "360px";
-        panel.style.maxWidth = "calc(100vw - 32px)";
-        panel.style.maxHeight = "calc(100vh - 90px)";
-        panel.style.zIndex = "2147483640";
-        panel.style.background = "rgba(10, 15, 29, 0.95)";
-        panel.style.backdropFilter = "blur(16px)";
-        panel.style.webkitBackdropFilter = "blur(16px)";
-        panel.style.border = "1px solid rgba(56, 189, 248, 0.35)";
-        panel.style.borderRadius = "14px";
-        panel.style.boxShadow = "0 12px 36px rgba(0, 0, 0, 0.75), 0 0 20px rgba(56, 189, 248, 0.15)";
-        panel.style.color = "#f8fafc";
-        panel.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-        panel.style.fontSize = "12.5px";
-        panel.style.lineHeight = "1.5";
-        panel.style.overflowY = "auto";
-        panel.style.display = "none";
-        panel.style.userSelect = "none";
+        iframe = document.createElement("iframe");
+        iframe.id = "__adguards_plonkit_iframe";
+        iframe.style.position = "fixed";
+        iframe.style.top = "60px";
+        iframe.style.right = "16px";
+        iframe.style.width = "380px";
+        iframe.style.maxWidth = "calc(100vw - 32px)";
+        iframe.style.height = "calc(100vh - 85px)";
+        iframe.style.zIndex = "2147483640";
+        iframe.style.border = "1px solid rgba(56, 189, 248, 0.4)";
+        iframe.style.borderRadius = "14px";
+        iframe.style.boxShadow = "0 16px 48px rgba(0, 0, 0, 0.85), 0 0 20px rgba(56, 189, 248, 0.15)";
+        iframe.style.background = "#090e1a";
+        iframe.style.display = "none";
+        iframe.style.userSelect = "none";
 
-        (document.body || document.documentElement).appendChild(panel);
-        plonkitPanelEl = panel;
-        return panel;
+        (document.body || document.documentElement).appendChild(iframe);
+        plonkitIframeEl = iframe;
+        return iframe;
     }
 
     function updatePlonkitUI() {
+        const iframe = createOrGetPlonkitIframe();
         if (!plonkitActive) {
-            if (plonkitPanelEl) {
-                plonkitPanelEl.style.display = "none";
-            }
+            iframe.style.display = "none";
             return;
         }
 
-        const panel = createOrGetPlonkitPanel();
-        panel.style.display = "block";
+        iframe.style.display = "block";
 
         const country = globalPlace.country || "";
         const countryCode = (globalPlace.countryCode || "").toUpperCase();
         const state = globalPlace.state || "";
-        const flag = getFlagEmoji(countryCode);
-        const slug = getPlonkitSlug(country, countryCode);
-        const plonkitUrl = slug ? ("https://www.plonkit.net/" + slug) : "https://www.plonkit.net";
-        const clue = countryCode ? (GEO_CLUES[countryCode] || null) : null;
 
-        if (autoSyncPlonkit && slug && slug !== lastRenderedSlug) {
-            lastRenderedSlug = slug;
-            if (plonkitCompanionWindow && !plonkitCompanionWindow.closed) {
-                try {
-                    plonkitCompanionWindow.location.href = plonkitUrl;
-                } catch (_) {}
-            }
-        }
-
-        let cluesHtml = "";
-        if (clue) {
-            const driveIsLeft = clue.drive && clue.drive.toLowerCase().includes("kiri");
-            const driveBadgeColor = driveIsLeft ? "#f59e0b" : "#38bdf8";
-            const driveBg = driveIsLeft ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)";
-            const driveBorder = driveIsLeft ? "rgba(245, 158, 11, 0.35)" : "rgba(56, 189, 248, 0.35)";
-
-            cluesHtml = `
-                <!-- Quick Badges Strip -->
-                <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
-                    <div style="background: ${driveBg}; border: 1px solid ${driveBorder}; color: ${driveBadgeColor}; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 11px;">
-                        🚗 Lajur: ${clue.drive}
-                    </div>
-                    <div style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); color: #cbd5e1; padding: 3px 8px; border-radius: 6px; font-size: 11px;">
-                        📷 ${clue.cam || "Gen 3/4"}
-                    </div>
-                    <div style="background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); color: #38bdf8; font-family: monospace; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;">
-                        🌐 ${clue.domain || ("." + countryCode.toLowerCase())}
-                    </div>
-                </div>
-
-                <!-- Clue Details List -->
-                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px;">
-                    ${clue.bollard ? `
-                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 8px 10px;">
-                            <div style="font-weight: 700; color: #38bdf8; font-size: 11px; margin-bottom: 2px;">🪧 BOLLARD & REFLEKTOR</div>
-                            <div style="color: #e2e8f0; font-size: 12px;">${clue.bollard}</div>
-                        </div>
-                    ` : ""}
-
-                    ${clue.plate ? `
-                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 8px 10px;">
-                            <div style="font-weight: 700; color: #38bdf8; font-size: 11px; margin-bottom: 2px;">🚘 PLAT NOMOR</div>
-                            <div style="color: #e2e8f0; font-size: 12px;">${clue.plate}</div>
-                        </div>
-                    ` : ""}
-
-                    ${clue.pole ? `
-                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 8px 10px;">
-                            <div style="font-weight: 700; color: #38bdf8; font-size: 11px; margin-bottom: 2px;">🪵 TIANG LISTRIK</div>
-                            <div style="color: #e2e8f0; font-size: 12px;">${clue.pole}</div>
-                        </div>
-                    ` : ""}
-
-                    ${clue.lines ? `
-                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 8px 10px;">
-                            <div style="font-weight: 700; color: #38bdf8; font-size: 11px; margin-bottom: 2px;">🛣️ MARKA JALAN</div>
-                            <div style="color: #e2e8f0; font-size: 12px;">${clue.lines}</div>
-                        </div>
-                    ` : ""}
-
-                    ${clue.tips ? `
-                        <div style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 8px 10px;">
-                            <div style="font-weight: 700; color: #38bdf8; font-size: 11px; margin-bottom: 2px;">💡 PETUNJUK KUNCI (META)</div>
-                            <div style="color: #f1f5f9; font-size: 12px;">${clue.tips}</div>
-                        </div>
-                    ` : ""}
-                </div>
-            `;
-        } else if (country) {
-            cluesHtml = `
-                <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 12px; margin-bottom: 12px; text-align: center;">
-                    <div style="color: #cbd5e1; font-size: 12px; margin-bottom: 4px;">Panduan ringkas langsung di Plonkit:</div>
-                    <div style="font-family: monospace; color: #38bdf8; font-size: 12px;">plonkit.net/${slug}</div>
-                </div>
-            `;
-        }
-
-        panel.innerHTML = `
-            <div style="padding: 12px 14px; background: rgba(56, 189, 248, 0.08); border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: rgba(10, 15, 29, 0.98); z-index: 2;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 22px; line-height: 1;">${flag}</span>
-                    <div>
-                        <div style="font-weight: 700; font-size: 14px; color: #ffffff; letter-spacing: 0.2px;">
-                            ${country ? country : "Menunggu Deteksi..."}
-                        </div>
-                        ${state ? `<div style="font-size: 11px; color: #94a3b8;">${state}</div>` : ""}
-                    </div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; font-family: monospace;">[H]</span>
-                    <button id="__adguards_plonkit_close" style="background: none; border: none; color: #94a3b8; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;" title="Tutup (Tekan H)">✕</button>
-                </div>
-            </div>
-            
-            <div style="padding: 14px;">
-                ${country ? `
-                    ${cluesHtml}
-
-                    <div style="margin-bottom: 10px;">
-                        <button id="__adguards_open_companion" style="width: 100%; background: #0284c7; border: none; color: #ffffff; font-weight: 600; font-size: 12px; padding: 9px 14px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
-                            <span>📖 Buka Foto & Panduan Plonkit (Jendela Samping)</span>
-                        </button>
-                    </div>
-
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #94a3b8; cursor: pointer;">
-                        <input type="checkbox" id="__adguards_autosync_cb" ${autoSyncPlonkit ? "checked" : ""} style="cursor: pointer; accent-color: #38bdf8;">
-                        <span>Auto-sync jendela pendamping saat ronde berganti</span>
-                    </label>
-                ` : `
-                    <div style="text-align: center; padding: 20px 8px; color: #94a3b8;">
-                        <div style="font-size: 26px; margin-bottom: 8px;">🧭</div>
-                        <div style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 4px;">Menunggu Lokasi Ronde...</div>
-                        <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Clue otomatis muncul di sini begitu Street View memuat koordinat negara.</div>
-                    </div>
-                `}
-            </div>
-            <div style="padding: 6px 14px 10px; font-size: 10px; color: #64748b; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.04);">
-                Tekan <strong style="color: #38bdf8;">H</strong> di keyboard untuk menyembunyikan / menampilkan
-            </div>
-        `;
-
-        const closeBtn = document.getElementById("__adguards_plonkit_close");
-        if (closeBtn) {
-            closeBtn.onclick = () => {
-                plonkitActive = false;
-                try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
-                updatePlonkitUI();
-            };
-        }
-
-        const openBtn = document.getElementById("__adguards_open_companion");
-        if (openBtn) {
-            openBtn.onclick = () => {
-                openPlonkitCompanion(slug);
-            };
-        }
-
-        const autoSyncCb = document.getElementById("__adguards_autosync_cb");
-        if (autoSyncCb) {
-            autoSyncCb.onchange = (e) => {
-                autoSyncPlonkit = e.target.checked;
-                try { localStorage.setItem("autoSyncPlonkit", JSON.stringify(autoSyncPlonkit)); } catch (_) {}
-            };
-        }
+        const html = generatePlonkitRewrittenHtml(countryCode, country, state);
+        iframe.srcdoc = html;
     }
 
     function togglePlonkitPanel() {
@@ -2016,6 +2178,14 @@
         try { localStorage.setItem("plonkitActive", JSON.stringify(plonkitActive)); } catch (_) {}
         updatePlonkitUI();
     }
+
+    window.addEventListener("message", (e) => {
+        if (e && e.data && e.data.type === "ADGUARDS_CLOSE_IFRAME") {
+            plonkitActive = false;
+            try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
+            updatePlonkitUI();
+        }
+    });
 
     // =================== Keyboard Listener (Shortcut G & H) ===================
     document.addEventListener("keydown", (e) => {
