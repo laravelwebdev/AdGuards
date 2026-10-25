@@ -87,7 +87,7 @@
 
     // =================== Global Variables ===================
     let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
-    let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "" };
+    let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "", countryCode: "" };
     let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
     let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
     let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
@@ -209,13 +209,16 @@
 
             const countryMatch = interceptedResult.match(countryPattern)?.[0];
             if (countryMatch) {
+                const code = countryMatch.replace(/"/g, "");
+                globalPlace.countryCode = code;
                 try {
-                    globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
+                    globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(code);
                 } catch (_) {
-                    globalPlace.country = countryMatch.replace(/"/g, "");
+                    globalPlace.country = code;
                 }
             } else if (isNewRound) {
                 globalPlace.country = "";
+                globalPlace.countryCode = "";
             }
 
             const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
@@ -236,6 +239,9 @@
                 }
             }
             saveCoordinates();
+            if (typeof updatePlonkitUI === "function") {
+                updatePlonkitUI();
+            }
         } catch (_) {}
     }
 
@@ -509,6 +515,9 @@
 
             syncTermsText();
             dismissPartyModalIfNeeded();
+            if (typeof updatePlonkitUI === "function") {
+                updatePlonkitUI();
+            }
             triggerStealthActiveIndicator();
         } catch (_) {}
     };
@@ -1024,11 +1033,245 @@
     document.addEventListener("touchend", handleTermsTrigger, true);
     document.addEventListener("pointerdown", handleTermsTrigger, true);
 
-    // =================== Keyboard Listener (Shortcut G) ===================
+    // =================== Plonkit Assistant (Shortcut H) ===================
+    let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
+    let autoSyncPlonkit = JSON.parse(localStorage.getItem("autoSyncPlonkit")) !== false;
+    let plonkitPanelEl = null;
+    let plonkitCompanionWindow = null;
+    let lastRenderedSlug = "";
+
+    function getFlagEmoji(code) {
+        if (!code || code.length !== 2) return "🌍";
+        try {
+            return String.fromCodePoint(...code.toUpperCase().split("").map(c => 127397 + c.charCodeAt(0)));
+        } catch (_) {
+            return "🌍";
+        }
+    }
+
+    function getPlonkitSlug(countryName, countryCode) {
+        if (!countryName && !countryCode) return "";
+        const code = (countryCode || "").toUpperCase();
+        const codeMap = {
+            "US": "united-states", "GB": "united-kingdom", "UK": "united-kingdom",
+            "KR": "south-korea", "CZ": "czechia", "RU": "russia", "AE": "united-arab-emirates",
+            "DO": "dominican-republic", "NZ": "new-zealand", "ZA": "south-africa", "SZ": "eswatini",
+            "MK": "north-macedonia", "CW": "curacao", "LA": "laos", "KG": "kyrgyzstan",
+            "TW": "taiwan", "HK": "hong-kong", "SG": "singapore", "MY": "malaysia",
+            "ID": "indonesia", "TH": "thailand", "PH": "philippines", "VN": "vietnam",
+            "KH": "cambodia", "BD": "bangladesh", "LK": "sri-lanka", "BT": "bhutan",
+            "MN": "mongolia", "JP": "japan", "AU": "australia", "BR": "brazil",
+            "MX": "mexico", "CO": "colombia", "AR": "argentina", "CL": "chile",
+            "PE": "peru", "EC": "ecuador", "BO": "bolivia", "UY": "uruguay",
+            "DK": "denmark", "SE": "sweden", "NO": "norway", "FI": "finland",
+            "IS": "iceland", "EE": "estonia", "LV": "latvia", "LT": "lithuania",
+            "PL": "poland", "DE": "germany", "NL": "netherlands", "BE": "belgium",
+            "FR": "france", "ES": "spain", "PT": "portugal", "IT": "italy",
+            "CH": "switzerland", "AT": "austria", "IE": "ireland", "GR": "greece",
+            "TR": "turkey", "RO": "romania", "BG": "bulgaria", "HU": "hungary",
+            "SK": "slovakia", "SI": "slovenia", "HR": "croatia", "RS": "serbia",
+            "ME": "montenegro", "AL": "albania", "UA": "ukraine", "IL": "israel",
+            "JO": "jordan", "QA": "qatar", "TN": "tunisia", "KE": "kenya",
+            "UG": "uganda", "GH": "ghana", "NG": "nigeria", "SN": "senegal",
+            "BW": "botswana", "LS": "lesotho", "MD": "moldova", "AD": "andorra",
+            "SM": "san-marino", "MT": "malta", "LU": "luxembourg", "FO": "faroe-islands",
+            "GL": "greenland", "GU": "guam", "MP": "northern-mariana-islands",
+            "AS": "american-samoa", "PR": "puerto-rico", "VI": "us-virgin-islands", "BM": "bermuda"
+        };
+        if (code && codeMap[code]) {
+            return codeMap[code];
+        }
+        return (countryName || "")
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+    }
+
+    function openPlonkitCompanion(slug) {
+        if (!slug) return;
+        const targetUrl = "https://www.plonkit.net/" + slug;
+        const w = Math.min(520, Math.floor(window.screen.availWidth * 0.42));
+        const h = window.screen.availHeight;
+        const left = Math.max(0, window.screen.availWidth - w);
+        const top = 0;
+        try {
+            if (plonkitCompanionWindow && !plonkitCompanionWindow.closed) {
+                plonkitCompanionWindow.location.href = targetUrl;
+                plonkitCompanionWindow.focus();
+            } else {
+                plonkitCompanionWindow = window.open(
+                    targetUrl,
+                    "AdGuardsPlonkitCompanion",
+                    `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes,status=no`
+                );
+            }
+        } catch (_) {
+            window.open(targetUrl, "_blank");
+        }
+    }
+
+    function createOrGetPlonkitPanel() {
+        let panel = document.getElementById("__adguards_plonkit_panel");
+        if (panel) return panel;
+
+        panel = document.createElement("div");
+        panel.id = "__adguards_plonkit_panel";
+        panel.style.position = "fixed";
+        panel.style.top = "68px";
+        panel.style.right = "16px";
+        panel.style.width = "340px";
+        panel.style.maxWidth = "calc(100vw - 32px)";
+        panel.style.zIndex = "2147483640";
+        panel.style.background = "rgba(10, 15, 29, 0.94)";
+        panel.style.backdropFilter = "blur(14px)";
+        panel.style.webkitBackdropFilter = "blur(14px)";
+        panel.style.border = "1px solid rgba(56, 189, 248, 0.35)";
+        panel.style.borderRadius = "14px";
+        panel.style.boxShadow = "0 12px 36px rgba(0, 0, 0, 0.65), 0 0 16px rgba(56, 189, 248, 0.15)";
+        panel.style.color = "#f8fafc";
+        panel.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+        panel.style.fontSize = "13px";
+        panel.style.lineHeight = "1.5";
+        panel.style.overflow = "hidden";
+        panel.style.display = "none";
+        panel.style.userSelect = "none";
+
+        (document.body || document.documentElement).appendChild(panel);
+        plonkitPanelEl = panel;
+        return panel;
+    }
+
+    function updatePlonkitUI() {
+        if (!plonkitActive) {
+            if (plonkitPanelEl) {
+                plonkitPanelEl.style.display = "none";
+            }
+            return;
+        }
+
+        const panel = createOrGetPlonkitPanel();
+        panel.style.display = "block";
+
+        const country = globalPlace.country || "";
+        const countryCode = globalPlace.countryCode || "";
+        const state = globalPlace.state || "";
+        const flag = getFlagEmoji(countryCode);
+        const slug = getPlonkitSlug(country, countryCode);
+        const plonkitUrl = slug ? ("https://www.plonkit.net/" + slug) : "https://www.plonkit.net";
+
+        if (autoSyncPlonkit && slug && slug !== lastRenderedSlug) {
+            lastRenderedSlug = slug;
+            if (plonkitCompanionWindow && !plonkitCompanionWindow.closed) {
+                try {
+                    plonkitCompanionWindow.location.href = plonkitUrl;
+                } catch (_) {}
+            }
+        }
+
+        panel.innerHTML = `
+            <div style="padding: 12px 14px; background: rgba(56, 189, 248, 0.08); border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 20px; line-height: 1;">${flag}</span>
+                    <div>
+                        <div style="font-weight: 700; font-size: 14px; color: #ffffff; letter-spacing: 0.2px;">
+                            ${country ? country : "Menunggu Deteksi..."}
+                        </div>
+                        ${state ? `<div style="font-size: 11px; color: #94a3b8;">${state}</div>` : ""}
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; font-family: monospace;">[H]</span>
+                    <button id="__adguards_plonkit_close" style="background: none; border: none; color: #94a3b8; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;" title="Tutup (Tekan H)">✕</button>
+                </div>
+            </div>
+            
+            <div style="padding: 14px;">
+                ${slug ? `
+                    <div style="background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-family: monospace; font-size: 11.5px; color: #38bdf8; word-break: break-all; display: flex; align-items: center; justify-content: space-between;">
+                        <span>plonkit.net/${slug}</span>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                        <button id="__adguards_open_companion" style="flex: 1; background: #0284c7; border: none; color: #ffffff; font-weight: 600; font-size: 12px; padding: 8px 12px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
+                            <span>📖 Buka Jendela Panduan</span>
+                        </button>
+                        <a href="${plonkitUrl}" target="_blank" rel="noopener noreferrer" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-weight: 600; font-size: 12px; padding: 8px 12px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; justify-content: center;" title="Buka Tab Baru">
+                            🔗 Tab
+                        </a>
+                    </div>
+
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #cbd5e1; cursor: pointer; margin-bottom: 10px;">
+                        <input type="checkbox" id="__adguards_autosync_cb" ${autoSyncPlonkit ? "checked" : ""} style="cursor: pointer; accent-color: #38bdf8;">
+                        <span>Auto-sync jendela saat ronde berganti</span>
+                    </label>
+
+                    <div style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 10px;">
+                        <details style="font-size: 11.5px; color: #94a3b8;">
+                            <summary style="cursor: pointer; color: #38bdf8; font-weight: 600; user-select: none;">ℹ️ Tampilkan Iframe di Sini</summary>
+                            <div style="margin-top: 8px; background: rgba(0, 0, 0, 0.4); border-radius: 8px; overflow: hidden; position: relative;">
+                                <iframe id="__adguards_plonkit_iframe" src="${plonkitUrl}" style="width: 100%; height: 260px; border: none; background: #ffffff;"></iframe>
+                                <div style="padding: 8px; font-size: 10.5px; color: #94a3b8; background: rgba(15, 23, 42, 0.95); border-top: 1px solid rgba(255,255,255,0.06); text-align: center;">
+                                    Jika iframe kosong karena proteksi <code>X-Frame-Options</code> Plonkit, gunakan tombol <strong>Buka Jendela Panduan</strong> di atas.
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                ` : `
+                    <div style="text-align: center; padding: 16px 8px; color: #94a3b8;">
+                        <div style="font-size: 24px; margin-bottom: 6px;">🧭</div>
+                        <div style="font-size: 12px; color: #cbd5e1; margin-bottom: 4px;">Belum ada negara yang terdeteksi</div>
+                        <div style="font-size: 11px;">Mulai tebak atau tunggu Street View memuat metadata lokasi...</div>
+                    </div>
+                `}
+            </div>
+            <div style="padding: 6px 14px 10px; font-size: 10.5px; color: #64748b; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.04);">
+                Tekan <strong style="color: #38bdf8;">H</strong> di keyboard untuk menyembunyikan / menampilkan
+            </div>
+        `;
+
+        const closeBtn = document.getElementById("__adguards_plonkit_close");
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                plonkitActive = false;
+                try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
+                updatePlonkitUI();
+            };
+        }
+
+        const openBtn = document.getElementById("__adguards_open_companion");
+        if (openBtn) {
+            openBtn.onclick = () => {
+                openPlonkitCompanion(slug);
+            };
+        }
+
+        const autoSyncCb = document.getElementById("__adguards_autosync_cb");
+        if (autoSyncCb) {
+            autoSyncCb.onchange = (e) => {
+                autoSyncPlonkit = e.target.checked;
+                try { localStorage.setItem("autoSyncPlonkit", JSON.stringify(autoSyncPlonkit)); } catch (_) {}
+            };
+        }
+    }
+
+    function togglePlonkitPanel() {
+        plonkitActive = !plonkitActive;
+        try { localStorage.setItem("plonkitActive", JSON.stringify(plonkitActive)); } catch (_) {}
+        updatePlonkitUI();
+    }
+
+    // =================== Keyboard Listener (Shortcut G & H) ===================
     document.addEventListener("keydown", (e) => {
         try {
+            const activeTag = document.activeElement ? document.activeElement.tagName : "";
+            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
+                return;
+            }
             const key = e.key ? e.key.toLowerCase() : "";
-            if (key === "g") {
+            if (key === "h") {
+                togglePlonkitPanel();
+            } else if (key === "g") {
                 dotAdded = true;
                 syncTermsText();
             } else if (key !== " " && !isRightMouseDown) {
