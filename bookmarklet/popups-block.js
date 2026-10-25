@@ -367,7 +367,12 @@
                         try {
                             if (isMapValid(instance) && foundMap !== instance) {
                                 const div = instance.getDiv();
-                                if (div && (div.classList.contains("widget-scene-canvas") || div.closest(".widget-scene"))) {
+                                if (div && (
+                                    div.classList.contains("widget-scene-canvas") ||
+                                    div.closest(".widget-scene") ||
+                                    div.id === "hint-map-canvas" ||
+                                    div.closest("#hint-map-canvas")
+                                )) {
                                     return;
                                 }
                                 foundMap = instance;
@@ -462,16 +467,72 @@
         return null;
     }
 
-    window.__adguards_focus_clue = function (heading, pitch) {
+    let currentPovAnimId = null;
+
+    function smoothRotatePov(targetHeading, targetPitch, duration) {
         try {
             const pano = activeStreetViewPanorama || findActiveStreetViewPanorama();
-            if (pano && typeof pano.setPov === "function") {
-                pano.setPov({
-                    heading: Number(heading) || 0,
-                    pitch: Number(pitch) || 0
-                });
+            if (!pano || typeof pano.getPov !== "function" || typeof pano.setPov !== "function") return;
+
+            if (currentPovAnimId) {
+                cancelAnimationFrame(currentPovAnimId);
+                currentPovAnimId = null;
             }
+
+            const currentPov = pano.getPov() || { heading: 0, pitch: 0 };
+            const startHeading = (typeof currentPov.heading === "number") ? currentPov.heading : 0;
+            const startPitch = (typeof currentPov.pitch === "number") ? currentPov.pitch : 0;
+
+            const tHeading = Number(targetHeading) || 0;
+            const tPitch = Math.max(-85, Math.min(85, Number(targetPitch) || 0));
+
+            // Hitung lintasan sudut terpendek (-180 derajat s.d. +180 derajat)
+            let diffHeading = ((tHeading - startHeading + 540) % 360) - 180;
+            let diffPitch = tPitch - startPitch;
+
+            // Jika sudut sudah pas, tidak perlu rotasi
+            if (Math.abs(diffHeading) < 0.5 && Math.abs(diffPitch) < 0.5) return;
+
+            // Durasi natural manusia: 380ms untuk sudut kecil, maks 850ms untuk putar 180 derajat
+            const angleDist = Math.abs(diffHeading);
+            const totalDuration = duration || Math.min(850, Math.max(380, Math.round(angleDist * 3.6)));
+            const startTime = performance.now();
+
+            // Smooth cubic ease-out (percepatan awal halus lalu melambat natural seperti tangan manusia memutar)
+            function easeOutCubic(t) {
+                return 1 - Math.pow(1 - t, 3);
+            }
+
+            function step(now) {
+                const elapsed = now - startTime;
+                const progress = Math.min(1, elapsed / totalDuration);
+                const eased = easeOutCubic(progress);
+
+                const currentH = (startHeading + diffHeading * eased + 360) % 360;
+                const currentP = startPitch + diffPitch * eased;
+
+                pano.setPov({
+                    heading: currentH,
+                    pitch: currentP
+                });
+
+                if (progress < 1) {
+                    currentPovAnimId = requestAnimationFrame(step);
+                } else {
+                    currentPovAnimId = null;
+                    pano.setPov({
+                        heading: (tHeading % 360 + 360) % 360,
+                        pitch: tPitch
+                    });
+                }
+            }
+
+            currentPovAnimId = requestAnimationFrame(step);
         } catch (_) {}
+    }
+
+    window.__adguards_focus_clue = function (heading, pitch) {
+        smoothRotatePov(heading, pitch);
     };
 
     // =================== Map Helpers & Lifecycle Detection ===================
@@ -488,6 +549,7 @@
         try {
             const div = map.getDiv();
             if (!div || !document.body || !document.body.contains(div) || div.isConnected === false) return false;
+            if (div.id === "hint-map-canvas" || div.closest("#hint-map-canvas")) return false;
             const center = map.getCenter();
             return !!(center && typeof center.lat === "function" && !isNaN(center.lat()));
         } catch (_) {
@@ -1580,6 +1642,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     ::-webkit-scrollbar { width: 6px; }
@@ -2044,13 +2108,23 @@
     }
     .img-alphabet {
         width: 100%;
-        max-height: 80px;
+        max-height: 85px;
         object-fit: contain;
-        background: #090e1a;
+        background: #ffffff !important;
         border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.3);
         padding: 6px;
-        margin-top: 6px;
+        margin: 0 auto;
+        display: block;
+    }
+    #hint-map-canvas a,
+    #hint-map-canvas .gm-style-cc,
+    #hint-map-canvas .gmnoprint a,
+    #hint-map-canvas a[href*="google.com"],
+    #hint-map-canvas a[href*="maps.google.com"],
+    #hint-map-canvas .leaflet-control-attribution {
+        display: none !important;
+        pointer-events: none !important;
     }
     .img-post {
         width: 100%;
@@ -2165,17 +2239,10 @@
             ${currency ? `<span class="badge badge-curr">💰 ${currency}</span>` : ""}</div>
 
         <!-- =================== 1. GUESS LOCATION MAP =================== -->
-        <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map (Google Maps Country Overview)</div>
+        <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map (Country Overview)</div>
         ${hasCoords ? `
             <div class="map-card" style="padding: 0; overflow: hidden; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.25);">
-                <div id="hint-map" style="width: 100%; height: 210px; background: #0f172a; position: relative;">
-                    <iframe 
-                        src="https://maps.google.com/maps?q=${lat},${lng}&hl=en&z=5&output=embed" 
-                        style="width: 100%; height: 100%; border: none; display: block;" 
-                        loading="lazy"
-                        title="Google Maps Country Overview">
-                    </iframe>
-                </div>
+                <div id="hint-map-canvas" style="width: 100%; height: 210px; background: #0f172a; position: relative;"></div>
             </div>
         ` : `
             <div class="empty-clues-box" style="text-align: center; padding: 16px 12px;">
@@ -2195,7 +2262,9 @@
             <div class="card">
                 <div class="card-title">🔤 LANGUAGE & ALPHABET</div>
                 <div class="card-body">Official language: <strong>${language}</strong> <span style="font-size:10.5px; color:#38bdf8;">(Click image to zoom)</span></div>
-                <img class="img-alphabet img-zoomable" src="${alphabetImgUrl}" alt="${countryName} Alphabet chart" onerror="this.style.display='none'">
+                <div style="background: #ffffff; border-radius: 8px; padding: 8px; margin-top: 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+                    <img class="img-alphabet img-zoomable" src="${alphabetImgUrl}" alt="${countryName} Alphabet chart" onerror="this.parentElement.style.display='none'">
+                </div>
             </div>
         ` : (language ? `
             <div class="card">
@@ -2370,9 +2439,67 @@
             if (lb && img) {
                 img.src = src;
                 if (cap) cap.textContent = caption || '';
+                if (src.indexOf('/languages/') !== -1 || (caption && caption.toLowerCase().indexOf('alphabet') !== -1)) {
+                    img.style.background = '#ffffff';
+                    img.style.padding = '14px';
+                    img.style.borderRadius = '8px';
+                    img.style.boxShadow = '0 6px 24px rgba(0,0,0,0.6)';
+                } else {
+                    img.style.background = '#090e1a';
+                    img.style.padding = '10px';
+                    img.style.boxShadow = '0 12px 48px rgba(0,0,0,0.9)';
+                }
                 lb.style.display = 'flex';
             }
         }
+
+        function renderHintMap() {
+            var container = document.getElementById("hint-map-canvas");
+            if (!container) return;
+            var lat = ${coords.lat || 0};
+            var lng = ${coords.lng || 0};
+            if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
+
+            // 1. Coba Google Maps JS API dari window.parent (resmi, tanpa layer controls & tanpa link open in google)
+            try {
+                if (window.parent && window.parent.google && window.parent.google.maps && window.parent.google.maps.Map) {
+                    var gm = window.parent.google.maps;
+                    var map = new gm.Map(container, {
+                        center: { lat: lat, lng: lng },
+                        zoom: 5,
+                        mapTypeControl: false,       // Hilangkan pilihan layer
+                        streetViewControl: false,    // Hilangkan street view pegman
+                        fullscreenControl: false,    // Hilangkan fullscreen
+                        zoomControl: true,           // Tombol zoom +/- tetap ada
+                        scaleControl: false,
+                        rotateControl: false,
+                        mapTypeId: 'roadmap',
+                        gestureHandling: 'cooperative'
+                    });
+                    new gm.Marker({
+                        position: { lat: lat, lng: lng },
+                        map: map,
+                        title: "${escapeHtml(countryName) || 'Round Location'}"
+                    });
+                    return;
+                }
+            } catch (_) {}
+
+            // 2. Fallback: Leaflet OpenStreetMap (100% bebas dari Google redirect / layer options)
+            try {
+                if (typeof L !== 'undefined') {
+                    var lMap = L.map(container, {
+                        center: [lat, lng],
+                        zoom: 5,
+                        zoomControl: true,
+                        attributionControl: false
+                    });
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(lMap);
+                    L.marker([lat, lng]).addTo(lMap);
+                }
+            } catch (_) {}
+        }
+        renderHintMap();
         document.addEventListener('click', function(e) {
             var t = e.target;
             if (t && t.tagName === 'IMG' && (t.classList.contains('img-zoomable') || t.classList.contains('img-alphabet') || t.classList.contains('img-fuel') || t.closest('.visual-card'))) {
@@ -2548,6 +2675,10 @@
     // Register cleanup function
     window.__ADGUARDS_CLEANUP__ = function() {
         try {
+            if (currentPovAnimId) {
+                cancelAnimationFrame(currentPovAnimId);
+                currentPovAnimId = null;
+            }
             window.removeEventListener("keydown", handleKeyDown, true);
             document.removeEventListener("keydown", handleKeyDown, true);
             window.removeEventListener("wheel", handleWheelZoom, true);
