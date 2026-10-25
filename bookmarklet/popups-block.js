@@ -980,47 +980,9 @@
                     link.style.webkitUserSelect = "none";
                     link.style.touchAction = "manipulation";
 
-                    const desired = dotAdded ? "Map Terms ✓" : "Terms";
+                    const desired = dotAdded ? "Map Terms" : "Terms";
                     if (link.textContent !== desired) {
                         link.textContent = desired;
-                    }
-
-                    // Create clickable [G] and [H] buttons next to Terms if not already present
-                    let parent = link.parentElement;
-                    if (parent && !parent.querySelector("#__adguards_btn_g")) {
-                        const btnG = document.createElement("span");
-                        btnG.id = "__adguards_btn_g";
-                        btnG.textContent = " [G:Pin]";
-                        btnG.style.cursor = "pointer";
-                        btnG.style.color = "#38bdf8";
-                        btnG.style.fontWeight = "bold";
-                        btnG.style.marginLeft = "4px";
-                        btnG.style.userSelect = "none";
-                        btnG.title = "Click or Press G to toggle Target Pin";
-                        btnG.onclick = function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleGMarker();
-                            return false;
-                        };
-                        parent.appendChild(btnG);
-
-                        const btnH = document.createElement("span");
-                        btnH.id = "__adguards_btn_h";
-                        btnH.textContent = " [H:Guide]";
-                        btnH.style.cursor = "pointer";
-                        btnH.style.color = "#38bdf8";
-                        btnH.style.fontWeight = "bold";
-                        btnH.style.marginLeft = "4px";
-                        btnH.style.userSelect = "none";
-                        btnH.title = "Click or Press H to toggle Plonkit & Geomastr Guide";
-                        btnH.onclick = function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            togglePlonkitPanel();
-                            return false;
-                        };
-                        parent.appendChild(btnH);
                     }
 
                     if (!link.__adguards_bound) {
@@ -1033,9 +995,7 @@
                             }
                             dotAdded = !dotAdded;
                             syncTermsText();
-                            if (dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
-                                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng, true);
-                            } else {
+                            if (!dotAdded) {
                                 isRightMouseDown = false;
                                 clearMarker();
                             }
@@ -2504,25 +2464,10 @@
     });
 
     
-    let gMarkerActive = false;
-    function toggleGMarker(forceState) {
-        if (typeof forceState === "boolean") {
-            gMarkerActive = forceState;
-        } else {
-            gMarkerActive = !gMarkerActive;
-        }
-        dotAdded = gMarkerActive;
-        syncTermsText();
-        if (gMarkerActive && globalCoordinates.lat && globalCoordinates.lng) {
-            showMarkerAt(globalCoordinates.lat, globalCoordinates.lng, true);
-        } else {
-            gMarkerActive = false;
-            clearMarker();
-        }
-    }
 
-    // =================== Keyboard & Click Controls (G & H) ===================
-    function handleGlobalKeyDown(e) {
+
+        // =================== Keyboard Listener (Shortcut G & H) ===================
+    document.addEventListener("keydown", (e) => {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
             if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
@@ -2530,36 +2475,17 @@
             }
             const key = e.key ? e.key.toLowerCase() : "";
             if (key === "h") {
-                if (e.cancelable) e.preventDefault();
-                e.stopPropagation();
                 togglePlonkitPanel();
             } else if (key === "g") {
-                if (e.cancelable) e.preventDefault();
-                e.stopPropagation();
-                toggleGMarker(true);
+                dotAdded = true;
+                syncTermsText();
+            } else if (key !== " " && !isRightMouseDown) {
+                dotAdded = false;
+                syncTermsText();
+                clearMarker();
             }
         } catch (_) {}
-    }
-
-    function handleGlobalKeyUp(e) {
-        try {
-            const activeTag = document.activeElement ? document.activeElement.tagName : "";
-            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
-                return;
-            }
-            const key = e.key ? e.key.toLowerCase() : "";
-            if (key === "g") {
-                if (!isRightMouseDown) {
-                    toggleGMarker(false);
-                }
-            }
-        } catch (_) {}
-    }
-
-    window.addEventListener("keydown", handleGlobalKeyDown, true);
-    document.addEventListener("keydown", handleGlobalKeyDown, true);
-    window.addEventListener("keyup", handleGlobalKeyUp, true);
-    document.addEventListener("keyup", handleGlobalKeyUp, true);
+    });
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
