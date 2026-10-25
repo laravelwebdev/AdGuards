@@ -112,6 +112,7 @@
     let hint = "";
     let dotAdded = false;
     let currentMarker = null;
+    let gMarkerActive = false;
     let isRightMouseDown = false;
     let currentAttachedDiv = null;
     let isScanning = false;
@@ -638,7 +639,8 @@
 
             if (targetEl !== currentAttachedDiv) {
                 if (currentAttachedDiv) {
-                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
+                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, true);
+                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, false);
                     currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
                     currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
                     currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
@@ -647,24 +649,32 @@
                 currentAttachedDiv = targetEl;
             }
 
-            targetEl.removeEventListener("wheel", handleWheelZoom);
+            targetEl.removeEventListener("wheel", handleWheelZoom, true);
+            targetEl.removeEventListener("wheel", handleWheelZoom, false);
             targetEl.removeEventListener("mousedown", handleMouseDown);
             targetEl.removeEventListener("mouseup", handleMouseUp);
             targetEl.removeEventListener("mouseleave", handleMouseLeave);
             targetEl.removeEventListener("contextmenu", handleContextMenu);
 
-            targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
+            targetEl.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
+            targetEl.addEventListener("wheel", handleWheelZoom, { capture: false, passive: false });
             targetEl.addEventListener("mousedown", handleMouseDown);
             targetEl.addEventListener("mouseup", handleMouseUp);
             targetEl.addEventListener("mouseleave", handleMouseLeave);
             targetEl.addEventListener("contextmenu", handleContextMenu);
 
             if (targetEl.parentElement) {
-                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom);
-                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { passive: false });
+                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom, true);
+                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
             }
         } catch (_) {}
     }
+
+    // Global wheel capture for middle-click scroll so no container or canvas can swallow it
+    window.removeEventListener("wheel", handleWheelZoom, true);
+    window.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
+    document.removeEventListener("wheel", handleWheelZoom, true);
+    document.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
 
     function stopCurrentAction() {
         if (currentPanAnimId) {
@@ -800,19 +810,21 @@
     // =================== Wheel Zoom Handler ===================
     function handleWheelZoom(e) {
         try {
+            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4);
+            if (!isMiddleHeld) return;
+
             if (!isMapValid(foundMap)) {
                 scanForMap();
-                if (!isMapValid(foundMap)) return;
             }
-            if (!dotAdded) return;
+            if (!isMapValid(foundMap)) return;
 
-            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4);
             const lat = Number(globalCoordinates.lat);
             const lng = Number(globalCoordinates.lng);
 
-            if (isMiddleHeld && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+            if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
                 e.preventDefault();
                 e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
                 stopCurrentAction();
                 const delta = e.deltaY < 0 ? 1 : -1;
                 const currentZoom = (typeof foundMap.getZoom === "function") ? foundMap.getZoom() : 3;
@@ -828,6 +840,11 @@
     // =================== Mouse Click Handlers ===================
     function handleMouseDown(e) {
         try {
+            if (e.button === 1) {
+                // Prevent Chrome middle-click autoscroll cursor
+                e.preventDefault();
+            }
+
             if (!isMapValid(foundMap)) {
                 scanForMap();
                 if (!isMapValid(foundMap)) return;
@@ -887,7 +904,7 @@
             if (!lat || !lng) return;
 
             clearMarker();
-            if (!isRightMouseDown && !force && !gMarkerActive) return;
+            if (!isRightMouseDown && !force) return;
 
             if (typeof google !== "undefined" && google.maps && google.maps.Marker) {
                 currentMarker = new google.maps.Marker({
@@ -2300,12 +2317,14 @@
         });
         document.addEventListener('keydown', function(e) {
             var k = e.key ? e.key.toLowerCase() : '';
-            if (k === 'h' || k === 'escape') {
+            var c = e.code || '';
+            if (k === 'h' || c === 'KeyH' || k === 'escape' || c === 'Escape') {
                 e.preventDefault();
+                e.stopPropagation();
                 window.parent.postMessage({ type: 'ADGUARDS_CLOSE_IFRAME' }, '*');
                 try { window.parent.focus(); } catch (_) {}
             }
-        });
+        }, true);
         window.addEventListener('message', function(e) {
             if (e && e.data && e.data.type === 'ADGUARDS_UPDATE_IRIS') {
                 var container = document.getElementById('section-iris-container');
@@ -2392,7 +2411,7 @@
 
     function togglePlonkitPanel() {
         const now = Date.now();
-        if (now - lastHToggle < 220) return;
+        if (now - lastHToggle < 60) return;
         lastHToggle = now;
 
         plonkitActive = !plonkitActive;
@@ -2403,7 +2422,12 @@
         updatePlonkitUI();
 
         if (!plonkitActive) {
-            try { window.focus(); if (document.body) document.body.focus(); } catch (_) {}
+            setTimeout(() => {
+                try {
+                    window.focus();
+                    if (document.body) document.body.focus();
+                } catch (_) {}
+            }, 10);
         }
     }
 
@@ -2419,7 +2443,7 @@
     
 
 
-        // =================== Keyboard Listener (Shortcut G & H) ===================
+    // =================== Keyboard Listener (Shortcut G & H) ===================
     function handleKeyDown(e) {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
@@ -2427,16 +2451,17 @@
                 return;
             }
             const key = e.key ? e.key.toLowerCase() : "";
-            if (key === "h") {
+            const code = e.code || "";
+            if (key === "h" || code === "KeyH") {
                 e.preventDefault();
                 e.stopPropagation();
                 if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
                 togglePlonkitPanel();
                 return;
-            } else if (key === "g") {
+            } else if (key === "g" || code === "KeyG") {
                 dotAdded = true;
                 syncTermsText();
-            } else if (key !== " " && !isRightMouseDown) {
+            } else if (key !== " " && !isRightMouseDown && key !== "control" && key !== "shift" && key !== "alt") {
                 dotAdded = false;
                 syncTermsText();
                 clearMarker();
@@ -2444,7 +2469,10 @@
         } catch (_) {}
     }
 
+    window.removeEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keydown", handleKeyDown, true);
+    document.removeEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
