@@ -1929,11 +1929,17 @@
             .replace(/'/g, "&#039;");
     }
 
-    function getGeoGuessrImageUrl(imagePath) {
-        if (!imagePath) return "";
-        if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) return imagePath;
-        if (imagePath.startsWith("/")) return "https://www.geoguessr.com" + imagePath;
-        return "https://www.geoguessr.com/images/auto/384/256/ce/0/plain/" + imagePath;
+    function getGeoGuessrImageUrls(rawPath) {
+        if (!rawPath) return { primary: "", fallback: "", fallback2: "" };
+        if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
+            return { primary: rawPath, fallback: rawPath, fallback2: rawPath };
+        }
+        const clean = String(rawPath).replace(/^\/+/, "");
+        return {
+            primary: "https://www.geoguessr.com/images/auto/128/128/ce/0/plain/" + clean,
+            fallback: "https://www.geoguessr.com/" + clean,
+            fallback2: "https://www.geoguessr.com/images/auto/256/256/ce/0/plain/" + clean
+        };
     }
 
     function getTypeBadge(type) {
@@ -1954,6 +1960,54 @@
         if (n === 1) return '<span class="clue-complexity-badge complexity-1">⭐ Easy</span>';
         if (n === 2) return '<span class="clue-complexity-badge complexity-2">⭐⭐ Medium</span>';
         return '<span class="clue-complexity-badge complexity-3">⭐⭐⭐ Advanced</span>';
+    }
+
+    function renderIrisClueCard(item, isPano) {
+        const rawImg = item.imagePath || item.imageUrl || item.image || item.picture || "";
+        const urls = getGeoGuessrImageUrls(rawImg);
+        const title = escapeHtml(item.title || (isPano ? "Panorama Clue" : "Country Clue"));
+        const desc = escapeHtml(item.description || "");
+        const typeBadge = getTypeBadge(item.type || item.category);
+        const compBadge = item.complexity ? getComplexityBadge(item.complexity) : "";
+        const headingBadge = (isPano && typeof item.heading === "number")
+            ? `<span class="clue-heading-pill">🧭 Heading ${Math.round(item.heading)}°</span>`
+            : "";
+
+        return `
+            <div class="iris-card">
+                <div class="iris-card-top">
+                    <div class="iris-brand">
+                        <span class="iris-dot"></span>
+                        <span class="iris-brand-text">IRIS AI</span>
+                    </div>
+                    <div class="iris-card-tags">
+                        <span class="clue-type-pill">${typeBadge}</span>
+                        ${compBadge}
+                        ${headingBadge}
+                    </div>
+                </div>
+                ${title ? `<div class="clue-title">${title}</div>` : ""}
+                ${rawImg ? `
+                    <div class="clue-image-container">
+                        <img class="clue-photo" 
+                             src="${urls.primary}" 
+                             alt="${title}" 
+                             loading="lazy" 
+                             onerror="if(!this._tried){this._tried=1;this.src='${urls.fallback}';}else if(this._tried===1){this._tried=2;this.src='${urls.fallback2}';}else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}"
+                        />
+                        <div class="clue-photo-fallback" style="display:none;">
+                            <span class="photo-fallback-icon">📸</span>
+                            <span>GeoGuessr Clue Photo</span>
+                        </div>
+                    </div>
+                ` : ""}
+                ${desc ? `
+                    <div class="iris-bubble">
+                        <div class="iris-bubble-content">${desc}</div>
+                    </div>
+                ` : ""}
+            </div>
+        `;
     }
 
     function generatePlonkitRewrittenHtml(countryCode, countryName, state) {
@@ -2099,7 +2153,6 @@
         font-size: 11px;
         font-weight: 800;
         letter-spacing: 0.8px;
-        color: #38bdf8;
         text-transform: uppercase;
         margin: 18px 0 10px;
         display: flex;
@@ -2110,13 +2163,18 @@
         content: '';
         flex: 1;
         height: 1px;
-        background: rgba(56, 189, 248, 0.2);
     }
     .section-divider-meta {
-        color: #94a3b8;
+        color: #38bdf8;
     }
     .section-divider-meta::after {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(56, 189, 248, 0.2);
+    }
+    .section-divider-iris {
+        color: #c084fc;
+    }
+    .section-divider-iris::after {
+        background: rgba(168, 85, 247, 0.25);
     }
 
     .sub-divider {
@@ -2126,136 +2184,6 @@
         margin: 10px 0 6px;
         letter-spacing: 0.4px;
         text-transform: uppercase;
-    }
-
-    /* GeoGuessr Official Clue Cards */
-    .clue-card {
-        background: #111827;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 10px;
-        padding: 12px;
-        margin-bottom: 10px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .clue-card:hover {
-        border-color: rgba(56, 189, 248, 0.4);
-        transform: translateY(-1px);
-    }
-    .clue-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 6px;
-        gap: 6px;
-        flex-wrap: wrap;
-    }
-    .clue-type-badge {
-        background: rgba(56, 189, 248, 0.12);
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        color: #38bdf8;
-        font-size: 10px;
-        font-weight: 700;
-        padding: 2px 7px;
-        border-radius: 5px;
-        text-transform: uppercase;
-        letter-spacing: 0.4px;
-    }
-    .clue-complexity-badge {
-        font-size: 9.5px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
-    }
-    .complexity-1 {
-        background: rgba(16, 185, 129, 0.15);
-        color: #34d399;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-    .complexity-2 {
-        background: rgba(245, 158, 11, 0.15);
-        color: #fbbf24;
-        border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-    .complexity-3 {
-        background: rgba(168, 85, 247, 0.15);
-        color: #c084fc;
-        border: 1px solid rgba(168, 85, 247, 0.3);
-    }
-    .clue-heading-badge {
-        background: rgba(255, 255, 255, 0.07);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #e2e8f0;
-        font-size: 9.5px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
-    }
-    .clue-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: #ffffff;
-        margin-bottom: 6px;
-        line-height: 1.3;
-    }
-    .clue-img-wrap {
-        width: 100%;
-        margin: 6px 0 8px 0;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #090e1a;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .clue-img {
-        width: 100%;
-        max-height: 160px;
-        object-fit: cover;
-        display: block;
-        transition: transform 0.2s ease;
-    }
-    .clue-img:hover {
-        transform: scale(1.02);
-    }
-    .clue-desc {
-        color: #cbd5e1;
-        font-size: 11.5px;
-        line-height: 1.5;
-    }
-
-    .loading-box {
-        text-align: center;
-        padding: 16px 10px;
-        color: #94a3b8;
-        background: rgba(56, 189, 248, 0.03);
-        border: 1px dashed rgba(56, 189, 248, 0.25);
-        border-radius: 8px;
-        margin-bottom: 12px;
-        font-size: 11.5px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-    }
-    .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(56, 189, 248, 0.2);
-        border-top-color: #38bdf8;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
-    .empty-clues-box {
-        padding: 10px 12px;
-        background: rgba(255,255,255,0.02);
-        border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.06);
-        color: #94a3b8;
-        font-size: 11px;
-        line-height: 1.4;
-        margin-bottom: 10px;
     }
 
     /* Plonkit Meta Cards */
@@ -2286,6 +2214,188 @@
     }
     .tips-card .card-title { color: #38bdf8; }
     .tips-card .card-body { color: #f8fafc; font-weight: 500; }
+
+    /* GeoGuessr Iris AI Clue Cards */
+    .iris-card {
+        background: linear-gradient(135deg, rgba(23, 20, 41, 0.95), rgba(15, 23, 42, 0.95));
+        border: 1px solid rgba(139, 92, 246, 0.28);
+        border-radius: 12px;
+        padding: 13px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .iris-card:hover {
+        border-color: rgba(168, 85, 247, 0.55);
+        transform: translateY(-1px);
+    }
+    .iris-card-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+    }
+    .iris-brand {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .iris-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #a855f7;
+        box-shadow: 0 0 8px #a855f7;
+        animation: irisPulse 2s infinite ease-in-out;
+    }
+    @keyframes irisPulse {
+        0%, 100% { opacity: 0.7; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 12px #c084fc; }
+    }
+    .iris-brand-text {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        background: linear-gradient(90deg, #c084fc, #38bdf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-transform: uppercase;
+    }
+    .iris-card-tags {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-wrap: wrap;
+    }
+    .clue-type-pill {
+        background: rgba(139, 92, 246, 0.16);
+        border: 1px solid rgba(139, 92, 246, 0.35);
+        color: #c084fc;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    .clue-complexity-badge {
+        font-size: 9.5px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    .complexity-1 {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .complexity-2 {
+        background: rgba(245, 158, 11, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .complexity-3 {
+        background: rgba(168, 85, 247, 0.15);
+        color: #c084fc;
+        border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+    .clue-heading-pill {
+        background: rgba(56, 189, 248, 0.12);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+        color: #38bdf8;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 5px;
+    }
+    .clue-title {
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #ffffff;
+        margin-bottom: 8px;
+        line-height: 1.35;
+    }
+    .clue-image-container {
+        width: 100%;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #090c14;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+    .clue-photo {
+        width: 100%;
+        max-height: 180px;
+        object-fit: cover;
+        display: block;
+        transition: transform 0.25s ease;
+    }
+    .clue-photo:hover {
+        transform: scale(1.02);
+    }
+    .clue-photo-fallback {
+        padding: 20px;
+        text-align: center;
+        color: #94a3b8;
+        font-size: 11px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+    .photo-fallback-icon {
+        font-size: 22px;
+    }
+    .iris-bubble {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 8px;
+        padding: 9px 11px;
+    }
+    .iris-bubble-content {
+        color: #e2e8f0;
+        font-size: 12px;
+        line-height: 1.5;
+    }
+
+    .loading-box {
+        text-align: center;
+        padding: 16px 10px;
+        color: #c084fc;
+        background: rgba(168, 85, 247, 0.05);
+        border: 1px dashed rgba(168, 85, 247, 0.3);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        font-size: 11.5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+    .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(168, 85, 247, 0.25);
+        border-top-color: #c084fc;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    .empty-clues-box {
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.02);
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.06);
+        color: #94a3b8;
+        font-size: 11px;
+        line-height: 1.4;
+        margin-bottom: 10px;
+    }
 
     .footer-note {
         margin-top: 18px;
@@ -2320,64 +2430,7 @@
             <span class="badge badge-domain">🌐 ${domain}</span>
         </div>
 
-        <!-- 1. OFFICIAL GEOGUESSR IRIS CLUES SECTION -->
-        <div class="section-divider">🎯 GeoGuessr Iris Clues</div>
-
-        ${isLoading ? `
-            <div class="loading-box">
-                <div class="spinner"></div>
-                <span>Fetching official GeoGuessr Iris clues...</span>
-            </div>
-        ` : ""}
-
-        <!-- Panorama Specific Clues -->
-        ${panoClues.length > 0 ? `
-            <div class="sub-divider">📍 Panorama Clues (${panoClues.length})</div>
-            ${panoClues.map(item => `
-                <div class="clue-card">
-                    <div class="clue-header">
-                        <span class="clue-type-badge">${getTypeBadge(item.type || item.category)}</span>
-                        ${item.complexity ? getComplexityBadge(item.complexity) : ""}
-                        ${typeof item.heading === "number" ? `<span class="clue-heading-badge">🧭 Heading ${Math.round(item.heading)}°</span>` : ""}
-                    </div>
-                    <div class="clue-title">${escapeHtml(item.title || "Target Object Clue")}</div>
-                    ${item.imagePath ? `
-                        <div class="clue-img-wrap">
-                            <img class="clue-img" src="${getGeoGuessrImageUrl(item.imagePath)}" alt="${escapeHtml(item.title || '')}" loading="lazy" onerror="this.parentElement.style.display='none'">
-                        </div>
-                    ` : ""}
-                    ${item.description ? `<div class="clue-desc">${escapeHtml(item.description)}</div>` : ""}
-                </div>
-            `).join("")}
-        ` : ""}
-
-        <!-- Country Educational Clues -->
-        ${countryClues.length > 0 ? `
-            <div class="sub-divider">🗺️ Country Clues (${countryClues.length})</div>
-            ${countryClues.map(item => `
-                <div class="clue-card">
-                    <div class="clue-header">
-                        <span class="clue-type-badge">${getTypeBadge(item.type || item.category)}</span>
-                        ${item.complexity ? getComplexityBadge(item.complexity) : ""}
-                    </div>
-                    <div class="clue-title">${escapeHtml(item.title || "Country Clue")}</div>
-                    ${item.imagePath ? `
-                        <div class="clue-img-wrap">
-                            <img class="clue-img" src="${getGeoGuessrImageUrl(item.imagePath)}" alt="${escapeHtml(item.title || '')}" loading="lazy" onerror="this.parentElement.style.display='none'">
-                        </div>
-                    ` : ""}
-                    ${item.description ? `<div class="clue-desc">${escapeHtml(item.description)}</div>` : ""}
-                </div>
-            `).join("")}
-        ` : ""}
-
-        ${(!isLoading && panoClues.length === 0 && countryClues.length === 0) ? `
-            <div class="empty-clues-box">
-                ℹ️ No official GeoGuessr Iris clues found for ${countryName} in the v4 database. Plonkit guide is active below.
-            </div>
-        ` : ""}
-
-        <!-- 2. PLONKIT CLUES & META SECTION -->
+        <!-- 1. PLONKIT CLUES & META SECTION (TOP) -->
         <div class="section-divider section-divider-meta">📖 Plonkit Clues & Meta</div>
 
         ${bollard ? `
@@ -2415,11 +2468,39 @@
             </div>
         ` : ""}
 
+        <!-- 2. OFFICIAL GEOGUESSR IRIS CLUES SECTION (BOTTOM) -->
+        <div class="section-divider section-divider-iris">🎯 GeoGuessr Iris Clues</div>
+
+        ${isLoading ? `
+            <div class="loading-box">
+                <div class="spinner"></div>
+                <span>Fetching official GeoGuessr Iris clues...</span>
+            </div>
+        ` : ""}
+
+        <!-- Panorama Specific Clues -->
+        ${panoClues.length > 0 ? `
+            <div class="sub-divider">📍 Panorama Clues (${panoClues.length})</div>
+            ${panoClues.map(item => renderIrisClueCard(item, true)).join("")}
+        ` : ""}
+
+        <!-- Country Educational Clues -->
+        ${countryClues.length > 0 ? `
+            <div class="sub-divider">🗺️ Country Clues (${countryClues.length})</div>
+            ${countryClues.map(item => renderIrisClueCard(item, false)).join("")}
+        ` : ""}
+
+        ${(!isLoading && panoClues.length === 0 && countryClues.length === 0) ? `
+            <div class="empty-clues-box">
+                ℹ️ No official GeoGuessr Iris visual clues returned for ${countryName}. Use the Plonkit guide above.
+            </div>
+        ` : ""}
+
     ` : `
         <div style="text-align: center; padding: 36px 12px; color: #94a3b8;">
             <div style="font-size: 32px; margin-bottom: 10px;">🧭</div>
             <div style="font-size: 14px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Awaiting Round Location...</div>
-            <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Official GeoGuessr visual clues and Plonkit meta tips will automatically load as soon as Street View coordinates are detected.</div>
+            <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Plonkit meta tips and official GeoGuessr Iris clues will load as soon as Street View coordinates are detected.</div>
         </div>
     `}
 
