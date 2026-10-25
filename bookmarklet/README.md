@@ -48,7 +48,7 @@ Seluruh kode tertanam langsung di URL bookmarklet. Tidak memerlukan koneksi ke G
    - **Android & PC**:
      - **Klik / Ketuk Teks `Terms`**: Mengaktifkan / menonaktifkan fitur. Menimpa aksi default Google Maps agar tidak membuka tab baru. Teks berganti menjadi `Map Terms`.
      - **Shortcut `G`**: Menampilkan titik koordinat target (menimpa default browser/game). Tahan untuk melihat titik (gaya keyboard PC), atau ketuk cepat untuk toggle nyala/mati (gaya keyboard Android).
-     - **Shortcut `H`**: Mengaktifkan / menonaktifkan **Iframe Panduan di Sisi Kiri Layar**. Menampilkan panduan lengkap dalam Bahasa Inggris asli (English): rangkuman petunjuk teks Plonkit (bollards, plates, poles, lines, meta tips) serta **seluruh keterangan lengkap Geomastr** (continent, currency, phone code, language & alphabet chart, street suffixes, road line system, galeri foto bollards & plat nomor asli, rambu jalan, utilitas pos, dan logo SPBU) tanpa menghalangi map canvas tebakan di kanan bawah.
+     - **Shortcut `H`**: Mengaktifkan / menonaktifkan **Iframe Panduan di Sisi Kiri Layar**. Menampilkan petunjuk edukasi visual resmi langsung dari **GeoGuessr v4 Education Engine (Iris AI)** untuk panorama dan negara target (foto contoh beresolusi tinggi, tipe petunjuk, dan level kompleksitas), serta rangkuman petunjuk teks Plonkit (bollards, plates, poles, lines, dan meta tips) tanpa menghalangi map canvas tebakan di kanan bawah.
    - **PC Desktop (Mouse)**:
      - **Tahan Klik Kanan**: Menampilkan titik pin biru tepat di lokasi target koordinat ronde. Lepas untuk menghilangkan.
      - **Klik Tengah Mouse**: Melakukan *human-like pan & gradual zoom* ke target lokasi.
