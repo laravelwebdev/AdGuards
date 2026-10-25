@@ -1855,6 +1855,86 @@
         }
     }
 
+    // =================== Translation Cache & Resolver (GeoGuessr i18n) ===================
+    const translationCache = {};
+
+    function formatFallbackClueKey(key) {
+        if (!key || typeof key !== "string") return "";
+        if (!key.startsWith("clue.")) return key;
+        let clean = key.replace(/^clue\./, "");
+        clean = clean.replace(/-(title|description)$/, "");
+        clean = clean.replace(/^[a-z]{2}-/, "");
+        clean = clean.replace(/[-_]/g, " ");
+        clean = clean.replace(/\b\w/g, c => c.toUpperCase());
+        return clean.trim();
+    }
+
+    function resolveTranslation(key) {
+        if (!key || typeof key !== "string") return Promise.resolve("");
+        if (!key.startsWith("clue.")) return Promise.resolve(key);
+        if (translationCache[key]) return Promise.resolve(translationCache[key]);
+
+        return fetch("/api/v3/translations/key/" + encodeURIComponent(key), { credentials: "omit" })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data && Array.isArray(data.phrases) && data.phrases.length > 0) {
+                    const en = data.phrases.find(p => p.language === "en" || p.locale === "en_US") || data.phrases[0];
+                    if (en && en.phrase) {
+                        translationCache[key] = en.phrase;
+                        return en.phrase;
+                    }
+                }
+                const fallback = formatFallbackClueKey(key);
+                translationCache[key] = fallback;
+                return fallback;
+            })
+            .catch(() => {
+                const fallback = formatFallbackClueKey(key);
+                translationCache[key] = fallback;
+                return fallback;
+            });
+    }
+
+    function getClueText(key, defaultText) {
+        if (!key) return defaultText || "";
+        if (!key.startsWith("clue.")) return key;
+        if (translationCache[key]) return translationCache[key];
+        resolveTranslation(key).then(() => {
+            if (plonkitActive && typeof updatePlonkitUI === "function") {
+                updatePlonkitUI();
+            }
+        });
+        return formatFallbackClueKey(key);
+    }
+
+    function fetchZoomedImage(pano, clue) {
+        if (!pano || !clue) return Promise.resolve(null);
+        if (clue.image && (clue.image.startsWith("http") || clue.image.startsWith("data:"))) {
+            return Promise.resolve(clue.image);
+        }
+        let query = "";
+        if (typeof clue.heading === "number") {
+            query = "heading=" + encodeURIComponent(clue.heading) +
+                    "&pitch=" + encodeURIComponent(clue.pitch || 0) +
+                    "&fov=" + encodeURIComponent(clue.fov || 60);
+        } else if (clue.cell) {
+            query = "cell=" + encodeURIComponent(clue.cell);
+        } else {
+            return Promise.resolve(null);
+        }
+
+        return fetch("/api/v4/game-analysis/zoomed-image/" + encodeURIComponent(pano) + "?" + query, { credentials: "include" })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                const img = data?.payload?.image || data?.image || null;
+                if (img) {
+                    clue.image = img;
+                }
+                return img;
+            })
+            .catch(() => null);
+    }
+
     // =================== Official GeoGuessr Clues Engine (Iris AI) ===================
     function triggerCluesFetch() {
         const cc = (globalPlace.countryCode || "").toLowerCase();
@@ -1879,32 +1959,70 @@
         }
 
         const tasks = [];
-        // Fetch official GeoGuessr country educational clues (/api/v4/clues/country/{countryCode}?count=8)
+        // 1. Fetch official GeoGuessr country educational clues (/api/v4/clues/country/{countryCode}?count=8)
         if (cc) {
             tasks.push(
                 fetch("/api/v4/clues/country/" + encodeURIComponent(cc) + "?count=8", { credentials: "include" })
                     .then(res => res.ok ? res.json() : null)
                     .then(data => {
+                        let list = [];
                         if (Array.isArray(data)) {
-                            cachedGeoGuessrClues.countryClues = data;
+                            list = data;
                         } else if (data && Array.isArray(data.clues)) {
-                            cachedGeoGuessrClues.countryClues = data.clues;
+                            list = data.clues;
                         }
+                        cachedGeoGuessrClues.countryClues = list;
+                        list.forEach(item => {
+                            if (item.title && item.title.startsWith("clue.")) resolveTranslation(item.title);
+                            if (item.description && item.description.startsWith("clue.")) resolveTranslation(item.description);
+                        });
                     })
                     .catch(() => {})
             );
         }
 
-        // Fetch official GeoGuessr panorama-specific visual clues (/api/v4/clues/{panoId})
+        // 2. Fetch official GeoGuessr panorama-specific visual clues (/api/v4/clues/{panoId})
         if (pano) {
             tasks.push(
                 fetch("/api/v4/clues/" + encodeURIComponent(pano), { credentials: "include" })
                     .then(res => res.ok ? res.json() : null)
-                    .then(data => {
+                    .then(async data => {
+                        let list = [];
                         if (Array.isArray(data)) {
-                            cachedGeoGuessrClues.panoClues = data;
+                            list = data;
                         } else if (data && Array.isArray(data.clues)) {
-                            cachedGeoGuessrClues.panoClues = data.clues;
+                            list = data.clues;
+                        }
+
+                        // Fallback to scout-clues if empty
+                        if (list.length === 0) {
+                            try {
+                                const scoutRes = await fetch("/api/v4/game-analysis/scout-clues/" + encodeURIComponent(pano), { credentials: "include" });
+                                if (scoutRes.ok) {
+                                    const scoutData = await scoutRes.json();
+                                    const payload = scoutData?.payload || scoutData;
+                                    if (Array.isArray(payload)) list = payload;
+                                    else if (Array.isArray(payload?.clues)) list = payload.clues;
+                                }
+                            } catch (_) {}
+                        }
+
+                        cachedGeoGuessrClues.panoClues = list;
+
+                        const subTasks = [];
+                        list.forEach(item => {
+                            if (item.title && item.title.startsWith("clue.")) {
+                                subTasks.push(resolveTranslation(item.title));
+                            }
+                            if (item.description && item.description.startsWith("clue.")) {
+                                subTasks.push(resolveTranslation(item.description));
+                            }
+                            if (!item.image && (typeof item.heading === "number" || item.cell)) {
+                                subTasks.push(fetchZoomedImage(pano, item));
+                            }
+                        });
+                        if (subTasks.length > 0) {
+                            await Promise.all(subTasks);
                         }
                     })
                     .catch(() => {})
@@ -1977,14 +2095,22 @@ function getCountrySlug(countryName, countryCode) {
 
     function getGeoGuessrImageUrls(rawPath) {
         if (!rawPath) return { primary: "", fallback: "", fallback2: "" };
-        if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
-            return { primary: rawPath, fallback: rawPath, fallback2: rawPath };
+        const str = String(rawPath).trim();
+        if (str.startsWith("data:image/") || str.startsWith("blob:")) {
+            return { primary: str, fallback: str, fallback2: str };
         }
-        const clean = String(rawPath).replace(/^\/+/, "");
+        if (str.startsWith("http://") || str.startsWith("https://")) {
+            return {
+                primary: str,
+                fallback: "https://www.geoguessr.com/_next/image?url=" + encodeURIComponent(str) + "&w=256&q=75",
+                fallback2: str
+            };
+        }
+        const clean = str.replace(/^\/+/, "");
         return {
-            primary: "https://www.geoguessr.com/images/auto/128/128/ce/0/plain/" + clean,
+            primary: "https://www.geoguessr.com/images/auto/240/160/ce/0/plain/" + clean,
             fallback: "https://www.geoguessr.com/" + clean,
-            fallback2: "https://www.geoguessr.com/images/auto/256/256/ce/0/plain/" + clean
+            fallback2: "https://www.geoguessr.com/_next/image?url=" + encodeURIComponent("/" + clean) + "&w=256&q=75"
         };
     }
 
@@ -2009,10 +2135,10 @@ function getCountrySlug(countryName, countryCode) {
     }
 
     function renderIrisClueCard(item, isPano) {
-        const rawImg = item.imagePath || item.imageUrl || item.image || item.picture || "";
+        const rawImg = item.image || item.imagePath || item.imageUrl || item.picture || item.media || "";
         const urls = getGeoGuessrImageUrls(rawImg);
-        const title = escapeHtml(item.title || (isPano ? "Panorama Clue" : "Country Clue"));
-        const desc = escapeHtml(item.description || "");
+        const title = escapeHtml(getClueText(item.title, isPano ? "Panorama Clue" : "Country Clue"));
+        const desc = escapeHtml(getClueText(item.description, ""));
         const typeBadge = getTypeBadge(item.type || item.category);
         const compBadge = item.complexity ? getComplexityBadge(item.complexity) : "";
         const headingBadge = (isPano && typeof item.heading === "number")
@@ -2043,10 +2169,17 @@ function getCountrySlug(countryName, countryCode) {
                         />
                         <div class="clue-photo-fallback" style="display:none;">
                             <span class="photo-fallback-icon">📸</span>
-                            <span>GeoGuessr Clue Photo</span>
+                            <span>${title || "GeoGuessr Clue Photo"}</span>
                         </div>
                     </div>
-                ` : ""}
+                ` : (isPano && typeof item.heading === "number" && cachedGeoGuessrClues.loading ? `
+                    <div class="clue-image-container">
+                        <div class="clue-photo-loading">
+                            <span class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></span>
+                            <span>Loading Street View Clue Photo...</span>
+                        </div>
+                    </div>
+                ` : "")}
                 ${desc ? `
                     <div class="iris-bubble">
                         <div class="iris-bubble-content">${desc}</div>
@@ -2475,6 +2608,16 @@ function getCountrySlug(countryName, countryCode) {
         align-items: center;
         gap: 6px;
     }
+    .clue-photo-loading {
+        padding: 22px;
+        text-align: center;
+        color: #c084fc;
+        font-size: 11px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
     .photo-fallback-icon {
         font-size: 22px;
     }
@@ -2702,15 +2845,15 @@ function getCountrySlug(countryName, countryCode) {
         </div>
 
         <!-- =================== 1. GUESS LOCATION MAP =================== -->
-        <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map</div>
+        <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map (Google Maps Country Overview)</div>
         ${hasCoords ? `
             <div class="map-card">
-                <div id="hint-map" style="width: 100%; height: 180px; border-radius: 8px; overflow: hidden; background: #0f172a; position: relative;">
+                <div id="hint-map" style="width: 100%; height: 190px; border-radius: 8px; overflow: hidden; background: #0f172a; position: relative;">
                     <iframe 
-                        src="https://www.openstreetmap.org/export/embed.html?bbox=${lng - 0.05}%2C${lat - 0.03}%2C${lng + 0.05}%2C${lat + 0.03}&layer=mapnik&marker=${lat}%2C${lng}" 
+                        src="https://maps.google.com/maps?q=${lat},${lng}&hl=en&z=5&output=embed" 
                         style="width: 100%; height: 100%; border: none; display: block;" 
                         loading="lazy"
-                        title="Guess Location Map">
+                        title="Google Maps Country Overview">
                     </iframe>
                 </div>
                 <div class="map-bar">
