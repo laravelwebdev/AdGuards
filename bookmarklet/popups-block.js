@@ -110,6 +110,8 @@
     let dotAdded = false;
     let currentMarker = null;
     let isRightMouseDown = false;
+    let isMiddleMouseDown = false;
+    let lastHToggle = 0;
     let currentAttachedDiv = null;
     let isScanning = false;
     let scanTimeout = null;
@@ -684,10 +686,18 @@
         }
     }, true);
     window.addEventListener("pointerdown", (e) => {
-        if (e.button === 1 && dotAdded) {
-            e.preventDefault();
+        if (e.button === 1) {
+            isMiddleMouseDown = true;
+            if (dotAdded) e.preventDefault();
         }
     }, true);
+    window.addEventListener("pointerup", (e) => {
+        if (e.button === 1) isMiddleMouseDown = false;
+    }, true);
+    window.addEventListener("blur", () => {
+        isMiddleMouseDown = false;
+        isRightMouseDown = false;
+    });
 
     function stopCurrentAction() {
         if (currentPanAnimId) {
@@ -836,22 +846,37 @@
     // =================== Wheel Zoom Handler (Hold Middle Button + Scroll) ===================
     function handleWheelZoom(e) {
         try {
-            if (!isMapValid(foundMap) || !dotAdded) return;
-            // Mode zoom otomatis hanya aktif saat tombol tengah di-hold (e.buttons === 4) sambil scroll wheel
-            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4);
+            if (!isMapValid(foundMap)) {
+                scanForMap();
+                if (!isMapValid(foundMap)) return;
+            }
+
+            // Mode zoom otomatis aktif saat tombol tengah di-hold sambil scroll wheel
+            const isMiddleHeld = isMiddleMouseDown || (e.buttons === 4) || ((e.buttons & 4) === 4);
             if (!isMiddleHeld) return;
 
-            if (globalCoordinates && globalCoordinates.lat && globalCoordinates.lng) {
-                e.preventDefault();
-                e.stopPropagation();
-                stopCurrentAction();
-                const delta = e.deltaY < 0 ? 1 : -1;
-                const currentZoom = foundMap.getZoom();
-                const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
+            const lat = Number(globalCoordinates.lat);
+            const lng = Number(globalCoordinates.lng);
+            if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            stopCurrentAction();
+
+            const delta = e.deltaY < 0 ? 1 : -1;
+            const currentZoom = (typeof foundMap.getZoom === "function") ? foundMap.getZoom() : 3;
+            const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
+
+            if (typeof foundMap.setZoom === "function") {
                 foundMap.setZoom(newZoom);
-                if (typeof google !== "undefined" && google.maps) {
-                    foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
-                }
+            }
+            if (typeof google !== "undefined" && google.maps && google.maps.LatLng) {
+                const targetLatLng = new google.maps.LatLng(lat, lng);
+                if (typeof foundMap.setCenter === "function") foundMap.setCenter(targetLatLng);
+                if (typeof foundMap.panTo === "function") foundMap.panTo(targetLatLng);
+            } else {
+                if (typeof foundMap.setCenter === "function") foundMap.setCenter({ lat, lng });
+                if (typeof foundMap.panTo === "function") foundMap.panTo({ lat, lng });
             }
         } catch (_) {}
     }
@@ -864,13 +889,16 @@
                 if (!isMapValid(foundMap)) return;
             }
 
-            if (e.button === 1 && dotAdded) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (globalCoordinates.lat && globalCoordinates.lng) {
-                    humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+            if (e.button === 1) {
+                isMiddleMouseDown = true;
+                if (dotAdded) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (globalCoordinates.lat && globalCoordinates.lng) {
+                        humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+                    }
+                    return;
                 }
-                return;
             }
 
             if (e.button === 2 && dotAdded) {
@@ -886,6 +914,9 @@
 
     function handleMouseUp(e) {
         try {
+            if (e.button === 1) {
+                isMiddleMouseDown = false;
+            }
             if (e.button === 2) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -895,6 +926,7 @@
 
     function handleMouseLeave() {
         try {
+            isMiddleMouseDown = false;
             if (isRightMouseDown) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -2099,7 +2131,7 @@
         </div>
         <div class="header-actions">
             <span class="badge-h">[H]</span>
-            <button class="btn-close" onclick="window.parent.postMessage({type:'ADGUARDS_CLOSE_IFRAME'}, '*')" title="Close guide (Press H)">✕</button>
+            <button class="btn-close" onclick="window.parent.postMessage({type:'ADGUARDS_CLOSE_IFRAME'}, '*'); try { window.parent.focus(); } catch(_){}" title="Close guide (Press H)">✕</button>
         </div>
     </div>
 
@@ -2334,6 +2366,15 @@
             if (k === 'h' || k === 'escape') {
                 e.preventDefault();
                 window.parent.postMessage({ type: 'ADGUARDS_CLOSE_IFRAME' }, '*');
+                try { window.parent.focus(); } catch (_) {}
+            }
+        });
+        window.addEventListener('message', function(e) {
+            if (e && e.data && e.data.type === 'ADGUARDS_UPDATE_IRIS') {
+                var container = document.getElementById('section-iris-container');
+                if (container && typeof e.data.html === 'string') {
+                    container.innerHTML = e.data.html;
+                }
             }
         });
     </script>
@@ -2379,40 +2420,62 @@
         const countryCode = (globalPlace.countryCode || "").toUpperCase();
         const state = globalPlace.state || "";
         const coords = globalCoordinates || { lat: 0, lng: 0 };
+        const lat = Number(coords.lat) || 0;
+        const lng = Number(coords.lng) || 0;
 
-        // Cek apakah ronde masih sama dan iframe sudah memiliki DOM yang ter-render
-        const isSameRound = lastRenderedRoundCoords &&
-            lastRenderedRoundCoords.lat === coords.lat &&
-            lastRenderedRoundCoords.lng === coords.lng;
+        // Cek apakah ronde masih sama jika koordinat tebakan ronde masih identik
+        const isSameRound = Boolean(
+            lastRenderedRoundCoords &&
+            Math.abs(lastRenderedRoundCoords.lat - lat) < 0.00001 &&
+            Math.abs(lastRenderedRoundCoords.lng - lng) < 0.00001
+        );
 
+        const panoClues = cachedGeoGuessrClues.panoClues || [];
+        const countryClues = cachedGeoGuessrClues.countryClues || [];
+        const isLoading = cachedGeoGuessrClues.loading;
+
+        if (isSameRound && iframe.srcdoc) {
+            // Peta (Bagian 1) TIDAK DI-RELOAD sama sekali saat Street View / pano berubah!
+            // Hanya update Iris AI Clues (Bagian 2) via postMessage & direct DOM fallback
+            const irisHtml = renderIrisSectionContent(panoClues, countryClues, isLoading, country);
+            try {
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.postMessage({ type: "ADGUARDS_UPDATE_IRIS", html: irisHtml }, "*");
+                }
+                const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+                const irisContainer = doc ? doc.getElementById("section-iris-container") : null;
+                if (irisContainer) {
+                    irisContainer.innerHTML = irisHtml;
+                }
+            } catch (_) {}
+            return;
+        }
+
+        // Ronde baru: render seluruh dokumen termasuk Google Maps overview
+        lastRenderedRoundCoords = { lat, lng };
         try {
-            const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-            const irisContainer = doc ? doc.getElementById("section-iris-container") : null;
-
-            if (isSameRound && irisContainer) {
-                // Saat Street View berpindah / berubah dalam ronde yang sama:
-                // HANYA refresh kontainer Iris Clues (Bagian 2) — Peta & marker Google Maps Bagian 1 TIDAK disentuh/reload sama sekali!
-                const panoClues = cachedGeoGuessrClues.panoClues || [];
-                const countryClues = cachedGeoGuessrClues.countryClues || [];
-                const isLoading = cachedGeoGuessrClues.loading;
-                irisContainer.innerHTML = renderIrisSectionContent(panoClues, countryClues, isLoading, country);
-                return;
-            }
-        } catch (_) {}
-
-        // Ronde baru pertama kali atau pembukaan pertama: render seluruh dokumen (Google Maps overview Bagian 1, Iris Bagian 2, Plonkit & Geomastr Bagian 3)
-        lastRenderedRoundCoords = { lat: coords.lat, lng: coords.lng };
-        const html = generatePlonkitRewrittenHtml(countryCode, country, state, coords);
-        iframe.srcdoc = html;
+            const html = generatePlonkitRewrittenHtml(countryCode, country, state, coords);
+            iframe.srcdoc = html;
+        } catch (err) {
+            console.error("[AdGuards] Error generating hint HTML:", err);
+        }
     }
 
     function togglePlonkitPanel() {
+        const now = Date.now();
+        if (now - lastHToggle < 220) return;
+        lastHToggle = now;
+
         plonkitActive = !plonkitActive;
         try { localStorage.setItem("plonkitActive", JSON.stringify(plonkitActive)); } catch (_) {}
         if (plonkitActive && typeof triggerCluesFetch === "function") {
             triggerCluesFetch();
         }
         updatePlonkitUI();
+
+        if (!plonkitActive) {
+            try { window.focus(); if (document.body) document.body.focus(); } catch (_) {}
+        }
     }
 
     window.addEventListener("message", (e) => {
@@ -2420,6 +2483,7 @@
             plonkitActive = false;
             try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
             updatePlonkitUI();
+            try { window.focus(); if (document.body) document.body.focus(); } catch (_) {}
         }
     });
 
@@ -2437,20 +2501,21 @@
             if (key === "h") {
                 e.preventDefault();
                 e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
                 togglePlonkitPanel();
+                return;
             } else if (key === "g") {
-                dotAdded = true;
+                dotAdded = !dotAdded;
                 syncTermsText();
-            } else if (key !== " " && !isRightMouseDown) {
-                dotAdded = false;
-                syncTermsText();
-                clearMarker();
+                if (!dotAdded) {
+                    isRightMouseDown = false;
+                    clearMarker();
+                }
             }
         } catch (_) {}
     }
 
     window.addEventListener("keydown", handleGlobalKeyDown, true);
-    document.addEventListener("keydown", handleGlobalKeyDown, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
