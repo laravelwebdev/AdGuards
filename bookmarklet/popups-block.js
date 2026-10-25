@@ -540,6 +540,7 @@
                 if (touchTimer) clearTimeout(touchTimer);
                 lastTouchEndTime = 0;
                 if (globalCoordinates.lat && globalCoordinates.lng) {
+                    isHoldingPanZoom = true;
                     humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
                 }
                 return;
@@ -575,6 +576,9 @@
         try {
             lastTouchEndTime = Date.now();
             isTouching = false;
+            if (isHoldingPanZoom) {
+                stopCurrentAction();
+            }
             if (touchTimer) {
                 clearTimeout(touchTimer);
                 touchTimer = null;
@@ -633,8 +637,10 @@
     // =================== Human-Like Pan & Zoom ===================
     let currentPanAnimId = null;
     let currentZoomTimerId = null;
+    let isHoldingPanZoom = false;
 
     function stopCurrentAction() {
+        isHoldingPanZoom = false;
         if (currentPanAnimId) {
             cancelAnimationFrame(currentPanAnimId);
             currentPanAnimId = null;
@@ -737,6 +743,7 @@
             if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng) || (targetLat === 0 && targetLng === 0)) return;
 
             stopCurrentAction();
+            isHoldingPanZoom = true;
 
             const startCenter = map.getCenter();
             if (!startCenter || typeof startCenter.lat !== "function") return;
@@ -758,7 +765,7 @@
 
     function stepZoomOutUntilInBounds(map, targetLat, targetLng, targetZoom) {
         try {
-            if (!isMapValid(map)) {
+            if (!isHoldingPanZoom || !isMapValid(map)) {
                 stopCurrentAction();
                 return;
             }
@@ -767,8 +774,12 @@
 
             // Berhenti zoom out jika titik sudah masuk ke bound canvas ATAU sudah mencapai batas minimal zoom (level 2)
             if (isPointInBounds(map, targetLat, targetLng) || currentZ <= 2) {
-                const humanViewPause = 240 + Math.floor(Math.random() * 80);
+                const humanViewPause = 220 + Math.floor(Math.random() * 60);
                 currentZoomTimerId = setTimeout(() => {
+                    if (!isHoldingPanZoom || !isMapValid(map)) {
+                        stopCurrentAction();
+                        return;
+                    }
                     panAndZoomIn(map, targetLat, targetLng, targetZoom);
                 }, humanViewPause);
                 return;
@@ -793,7 +804,7 @@
             }
 
             // Jeda natural saat scroll wheel zoom out
-            const zoomOutDelay = 150 + Math.floor(Math.random() * 50);
+            const zoomOutDelay = 140 + Math.floor(Math.random() * 50);
             currentZoomTimerId = setTimeout(() => {
                 stepZoomOutUntilInBounds(map, targetLat, targetLng, targetZoom);
             }, zoomOutDelay);
@@ -804,7 +815,7 @@
 
     function panAndZoomIn(map, targetLat, targetLng, targetZoom) {
         try {
-            if (!isMapValid(map)) {
+            if (!isHoldingPanZoom || !isMapValid(map)) {
                 stopCurrentAction();
                 return;
             }
@@ -840,7 +851,7 @@
 
             function panFrame(now) {
                 try {
-                    if (!isMapValid(map)) {
+                    if (!isHoldingPanZoom || !isMapValid(map)) {
                         stopCurrentAction();
                         return;
                     }
@@ -865,8 +876,12 @@
                         }
                         currentPanAnimId = null;
 
-                        const humanViewPause = 320 + Math.floor(Math.random() * 90);
+                        const humanViewPause = 300 + Math.floor(Math.random() * 80);
                         currentZoomTimerId = setTimeout(() => {
+                            if (!isHoldingPanZoom || !isMapValid(map)) {
+                                stopCurrentAction();
+                                return;
+                            }
                             stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
                         }, humanViewPause);
                     }
@@ -883,7 +898,7 @@
 
     function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
         try {
-            if (!isMapValid(map)) {
+            if (!isHoldingPanZoom || !isMapValid(map)) {
                 stopCurrentAction();
                 return;
             }
@@ -902,10 +917,14 @@
 
                 const zoomRemaining = targetZoom - nextZ;
                 const scrollDelay = zoomRemaining > 2
-                    ? 190 + Math.floor(Math.random() * 60)
-                    : 310 + Math.floor(Math.random() * 80);
+                    ? 180 + Math.floor(Math.random() * 50)
+                    : 280 + Math.floor(Math.random() * 60);
 
                 currentZoomTimerId = setTimeout(() => {
+                    if (!isHoldingPanZoom || !isMapValid(map)) {
+                        stopCurrentAction();
+                        return;
+                    }
                     stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
                 }, scrollDelay);
             } else {
@@ -943,13 +962,20 @@
                 if (!isMapValid(foundMap)) return;
             }
 
+            // Klik tengah mouse: Tahan untuk meluncur (Hold-to-Zoom)
             if (e.button === 1 && dotAdded) {
                 e.preventDefault();
                 e.stopPropagation();
                 if (globalCoordinates.lat && globalCoordinates.lng) {
+                    isHoldingPanZoom = true;
                     humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
                 }
                 return;
+            }
+
+            // Jika klik tombol lain saat sedang meluncur, hentikan seketika
+            if (e.button !== 1 && isHoldingPanZoom) {
+                stopCurrentAction();
             }
 
             if (e.button === 2 && dotAdded) {
@@ -965,6 +991,10 @@
 
     function handleMouseUp(e) {
         try {
+            // Lepas klik tengah: Berhenti seketika di posisi & zoom saat ini
+            if (e.button === 1) {
+                stopCurrentAction();
+            }
             if (e.button === 2) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -974,6 +1004,9 @@
 
     function handleMouseLeave() {
         try {
+            if (isHoldingPanZoom) {
+                stopCurrentAction();
+            }
             if (isRightMouseDown) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -1158,6 +1191,11 @@
     window.addEventListener("click", handleTermsTrigger, true);
     window.addEventListener("touchend", handleTermsTrigger, true);
     window.addEventListener("pointerdown", handleTermsTrigger, true);
+    window.addEventListener("mouseup", (e) => {
+        if (e.button === 1 && isHoldingPanZoom) {
+            stopCurrentAction();
+        }
+    }, true);
     document.addEventListener("click", handleTermsTrigger, true);
     document.addEventListener("touchend", handleTermsTrigger, true);
     document.addEventListener("pointerdown", handleTermsTrigger, true);
