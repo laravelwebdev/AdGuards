@@ -104,8 +104,9 @@
     };
     let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
     let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
-    let roundId = 0;
-    let renderedRoundId = -1;
+    let roundId = 1;
+    let renderedRoundId = 0;
+    let lastHToggle = 0;
     let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
     let foundMap = null;
     let hint = "";
@@ -155,6 +156,7 @@
             playedRounds = [];
             currentRoundCoords = null;
             lastRenderedRoundCoords = null;
+            roundId++;
         }
         currentGameId = gameId;
     }
@@ -656,6 +658,11 @@
             targetEl.addEventListener("mouseup", handleMouseUp);
             targetEl.addEventListener("mouseleave", handleMouseLeave);
             targetEl.addEventListener("contextmenu", handleContextMenu);
+
+            if (targetEl.parentElement) {
+                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom);
+                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { passive: false });
+            }
         } catch (_) {}
     }
 
@@ -793,17 +800,26 @@
     // =================== Wheel Zoom Handler ===================
     function handleWheelZoom(e) {
         try {
-            if (!isMapValid(foundMap) || !dotAdded) return;
-            if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
+            if (!isMapValid(foundMap)) {
+                scanForMap();
+                if (!isMapValid(foundMap)) return;
+            }
+            if (!dotAdded) return;
+
+            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4);
+            const lat = Number(globalCoordinates.lat);
+            const lng = Number(globalCoordinates.lng);
+
+            if (isMiddleHeld && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
                 e.preventDefault();
                 e.stopPropagation();
                 stopCurrentAction();
                 const delta = e.deltaY < 0 ? 1 : -1;
-                const currentZoom = foundMap.getZoom();
+                const currentZoom = (typeof foundMap.getZoom === "function") ? foundMap.getZoom() : 3;
                 const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
-                foundMap.setZoom(newZoom);
-                if (typeof google !== "undefined" && google.maps) {
-                    foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
+                if (typeof foundMap.setZoom === "function") foundMap.setZoom(newZoom);
+                if (typeof google !== "undefined" && google.maps && google.maps.LatLng) {
+                    foundMap.panTo(new google.maps.LatLng(lat, lng));
                 }
             }
         } catch (_) {}
@@ -2403,8 +2419,8 @@
     
 
 
-        // =================== Keyboard Listener (Shortcut G & H - Commit Terst) ===================
-    document.addEventListener("keydown", (e) => {
+        // =================== Keyboard Listener (Shortcut G & H) ===================
+    function handleKeyDown(e) {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
             if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
@@ -2412,7 +2428,11 @@
             }
             const key = e.key ? e.key.toLowerCase() : "";
             if (key === "h") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
                 togglePlonkitPanel();
+                return;
             } else if (key === "g") {
                 dotAdded = true;
                 syncTermsText();
@@ -2422,7 +2442,9 @@
                 clearMarker();
             }
         } catch (_) {}
-    });
+    }
+
+    window.addEventListener("keydown", handleKeyDown, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
