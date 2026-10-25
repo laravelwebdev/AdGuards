@@ -1963,13 +1963,10 @@
                 ${country ? `
                     ${cluesHtml}
 
-                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                        <button id="__adguards_open_companion" style="flex: 1; background: #0284c7; border: none; color: #ffffff; font-weight: 600; font-size: 12px; padding: 8px 12px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
-                            <span>📖 Buka Foto & Panduan Plonkit</span>
+                    <div style="margin-bottom: 10px;">
+                        <button id="__adguards_open_companion" style="width: 100%; background: #0284c7; border: none; color: #ffffff; font-weight: 600; font-size: 12px; padding: 9px 14px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
+                            <span>📖 Buka Foto & Panduan Plonkit (Jendela Samping)</span>
                         </button>
-                        <a href="${plonkitUrl}" target="_blank" rel="noopener noreferrer" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); color: #f8fafc; font-weight: 600; font-size: 12px; padding: 8px 12px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; justify-content: center;" title="Buka Tab Baru">
-                            🔗 Tab
-                        </a>
                     </div>
 
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #94a3b8; cursor: pointer;">
