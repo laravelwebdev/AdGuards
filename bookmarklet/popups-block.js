@@ -89,6 +89,8 @@
     let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
     let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "", countryCode: "" };
     let currentPanoId = "";
+    let activeStreetViewPanorama = null;
+    let lastRenderedRoundCoords = null;
     let cachedGeoGuessrClues = {
         key: "",
         countryCode: "",
@@ -148,6 +150,7 @@
         if (gameId && currentGameId && gameId !== currentGameId) {
             playedRounds = [];
             currentRoundCoords = null;
+            lastRenderedRoundCoords = null;
         }
         currentGameId = gameId;
     }
@@ -215,6 +218,7 @@
             if (isNewRound) {
                 globalCoordinates.lat = lat;
                 globalCoordinates.lng = lng;
+                lastRenderedRoundCoords = null;
             }
 
             const countryMatch = interceptedResult.match(countryPattern)?.[0];
@@ -398,8 +402,10 @@
                     const origPano = google.maps.StreetViewPanorama;
                     google.maps.StreetViewPanorama = function (...args) {
                         const inst = new origPano(...args);
+                        activeStreetViewPanorama = inst;
                         try {
                             inst.addListener("pano_changed", function () {
+                                activeStreetViewPanorama = inst;
                                 const p = inst.getPano();
                                 if (p && p !== currentPanoId) {
                                     currentPanoId = p;
@@ -418,6 +424,7 @@
                     proto.__adguards_pano_hooked = true;
                     const origSetPano = proto.setPano;
                     proto.setPano = function (pano) {
+                        activeStreetViewPanorama = this;
                         if (typeof pano === "string" && pano && pano !== currentPanoId) {
                             currentPanoId = pano;
                             if (typeof triggerCluesFetch === "function") triggerCluesFetch();
@@ -429,43 +436,33 @@
         } catch (_) {}
     }
 
-    function hookStreetViewPanorama() {
+    function findActiveStreetViewPanorama() {
+        if (activeStreetViewPanorama) return activeStreetViewPanorama;
         try {
-            if (typeof google !== "undefined" && google.maps) {
-                if (google.maps.StreetViewPanorama && !google.maps.StreetViewPanorama.__adguards_hooked) {
-                    const origPano = google.maps.StreetViewPanorama;
-                    google.maps.StreetViewPanorama = function (...args) {
-                        const inst = new origPano(...args);
-                        try {
-                            inst.addListener("pano_changed", function () {
-                                const p = inst.getPano();
-                                if (p && p !== currentPanoId) {
-                                    currentPanoId = p;
-                                    if (typeof triggerCluesFetch === "function") triggerCluesFetch();
-                                }
-                            });
-                        } catch (_) {}
-                        return inst;
-                    };
-                    Object.assign(google.maps.StreetViewPanorama, origPano);
-                    google.maps.StreetViewPanorama.prototype = origPano.prototype;
-                    google.maps.StreetViewPanorama.__adguards_hooked = true;
-                }
-                if (google.maps.StreetViewPanorama && google.maps.StreetViewPanorama.prototype && !google.maps.StreetViewPanorama.prototype.__adguards_pano_hooked) {
-                    const proto = google.maps.StreetViewPanorama.prototype;
-                    proto.__adguards_pano_hooked = true;
-                    const origSetPano = proto.setPano;
-                    proto.setPano = function (pano) {
-                        if (typeof pano === "string" && pano && pano !== currentPanoId) {
-                            currentPanoId = pano;
-                            if (typeof triggerCluesFetch === "function") triggerCluesFetch();
-                        }
-                        return origSetPano.apply(this, arguments);
-                    };
-                }
+            for (const k in window) {
+                try {
+                    const val = window[k];
+                    if (val && typeof val.setPov === "function" && typeof val.getPano === "function") {
+                        activeStreetViewPanorama = val;
+                        return val;
+                    }
+                } catch (_) {}
             }
         } catch (_) {}
+        return null;
     }
+
+    window.__adguards_focus_clue = function (heading, pitch) {
+        try {
+            const pano = activeStreetViewPanorama || findActiveStreetViewPanorama();
+            if (pano && typeof pano.setPov === "function") {
+                pano.setPov({
+                    heading: Number(heading) || 0,
+                    pitch: Number(pitch) || 0
+                });
+            }
+        } catch (_) {}
+    };
 
     // =================== Map Helpers & Lifecycle Detection ===================
     function isGoogleMap(obj) {
@@ -2093,8 +2090,28 @@ function getCountrySlug(countryName, countryCode) {
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    function getGeoGuessrImageUrls(rawPath) {
-        if (!rawPath) return { primary: "", fallback: "", fallback2: "" };
+    function getStreetViewStaticUrl(pano, heading, pitch, lat, lng) {
+        const key = (window.__GEOGUESSR_CONFIG__ && window.__GEOGUESSR_CONFIG__.googleMapsApiKey) || "AIzaSyDqRTXlnHXELLKn7645Q1L_5oc4CswKZK4";
+        const h = typeof heading === "number" ? Math.round(heading) : 0;
+        const p = typeof pitch === "number" ? Math.round(pitch) : 0;
+        if (pano) {
+            return `https://maps.googleapis.com/maps/api/streetview?size=400x200&pano=${encodeURIComponent(pano)}&heading=${h}&pitch=${p}&fov=60&key=${key}`;
+        }
+        if (lat && lng) {
+            return `https://maps.googleapis.com/maps/api/streetview?size=400x200&location=${lat},${lng}&heading=${h}&pitch=${p}&fov=60&key=${key}`;
+        }
+        return "";
+    }
+
+    function getGeoGuessrImageUrls(rawPath, isPano, heading, pitch) {
+        const svStatic = getStreetViewStaticUrl(currentPanoId, heading, pitch, globalCoordinates.lat, globalCoordinates.lng);
+        if (!rawPath) {
+            return {
+                primary: svStatic,
+                fallback: svStatic,
+                fallback2: svStatic
+            };
+        }
         const str = String(rawPath).trim();
         if (str.startsWith("data:image/") || str.startsWith("blob:")) {
             return { primary: str, fallback: str, fallback2: str };
@@ -2102,15 +2119,16 @@ function getCountrySlug(countryName, countryCode) {
         if (str.startsWith("http://") || str.startsWith("https://")) {
             return {
                 primary: str,
-                fallback: "https://www.geoguessr.com/_next/image?url=" + encodeURIComponent(str) + "&w=256&q=75",
+                fallback: svStatic || str,
                 fallback2: str
             };
         }
         const clean = str.replace(/^\/+/, "");
+        const base = (window.__GEOGUESSR_CONFIG__ && window.__GEOGUESSR_CONFIG__.imageBaseUrl) || "https://www.geoguessr.com/images";
         return {
-            primary: "https://www.geoguessr.com/images/auto/240/160/ce/0/plain/" + clean,
+            primary: `${base}/resize:fit:240:0/gravity:ce/plain/${clean}`,
             fallback: "https://www.geoguessr.com/" + clean,
-            fallback2: "https://www.geoguessr.com/_next/image?url=" + encodeURIComponent("/" + clean) + "&w=256&q=75"
+            fallback2: svStatic || ("https://www.geoguessr.com/images/" + clean)
         };
     }
 
@@ -2136,17 +2154,23 @@ function getCountrySlug(countryName, countryCode) {
 
     function renderIrisClueCard(item, isPano) {
         const rawImg = item.image || item.imagePath || item.imageUrl || item.picture || item.media || "";
-        const urls = getGeoGuessrImageUrls(rawImg);
+        const urls = getGeoGuessrImageUrls(rawImg, isPano, item.heading, item.pitch);
         const title = escapeHtml(getClueText(item.title, isPano ? "Panorama Clue" : "Country Clue"));
         const desc = escapeHtml(getClueText(item.description, ""));
         const typeBadge = getTypeBadge(item.type || item.category);
         const compBadge = item.complexity ? getComplexityBadge(item.complexity) : "";
-        const headingBadge = (isPano && typeof item.heading === "number")
+        const hasHeading = typeof item.heading === "number";
+        const headingBadge = hasHeading
             ? `<span class="clue-heading-pill">🧭 Heading ${Math.round(item.heading)}°</span>`
             : "";
+        const focusAttr = hasHeading
+            ? `onclick="if(window.parent&&window.parent.__adguards_focus_clue){window.parent.__adguards_focus_clue(${item.heading},${item.pitch||0});}" title="Click to rotate Street View camera to clue"`
+            : "";
+        const cardStyle = hasHeading ? "cursor: pointer;" : "";
+        const imgUrl = urls.primary;
 
         return `
-            <div class="iris-card">
+            <div class="iris-card" style="${cardStyle}" ${focusAttr}>
                 <div class="iris-card-top">
                     <div class="iris-brand">
                         <span class="iris-dot"></span>
@@ -2159,20 +2183,21 @@ function getCountrySlug(countryName, countryCode) {
                     </div>
                 </div>
                 ${title ? `<div class="clue-title">${title}</div>` : ""}
-                ${rawImg ? `
+                ${imgUrl ? `
                     <div class="clue-image-container">
                         <img class="clue-photo" 
-                             src="${urls.primary}" 
+                             src="${imgUrl}" 
                              alt="${title}" 
                              loading="lazy" 
-                             onerror="if(!this._tried){this._tried=1;this.src='${urls.fallback}';}else if(this._tried===1){this._tried=2;this.src='${urls.fallback2}';}else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}"
+                             onerror="if(!this._tried){this._tried=1;if('${urls.fallback}')this.src='${urls.fallback}';else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}}else if(this._tried===1){this._tried=2;if('${urls.fallback2}')this.src='${urls.fallback2}';else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}}else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}"
                         />
                         <div class="clue-photo-fallback" style="display:none;">
                             <span class="photo-fallback-icon">📸</span>
                             <span>${title || "GeoGuessr Clue Photo"}</span>
                         </div>
+                        ${hasHeading ? `<div class="clue-look-hint">👁️ Click to rotate camera (${Math.round(item.heading)}°)</div>` : ""}
                     </div>
-                ` : (isPano && typeof item.heading === "number" && cachedGeoGuessrClues.loading ? `
+                ` : (isPano && hasHeading && cachedGeoGuessrClues.loading ? `
                     <div class="clue-image-container">
                         <div class="clue-photo-loading">
                             <span class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></span>
@@ -2187,6 +2212,45 @@ function getCountrySlug(countryName, countryCode) {
                 ` : ""}
             </div>
         `;
+    }
+
+    function renderIrisSectionContent(panoClues, countryClues, isLoading, countryName) {
+        let out = `
+            <div class="section-divider section-divider-iris">🎯 2. Street View & Iris AI Clues</div>
+        `;
+
+        if (isLoading) {
+            out += `
+                <div class="loading-box">
+                    <div class="spinner"></div>
+                    <span>Fetching official GeoGuessr Iris clues...</span>
+                </div>
+            `;
+        }
+
+        if (panoClues.length > 0) {
+            out += `
+                <div class="sub-divider">📍 Panorama Clues (${panoClues.length})</div>
+                ${panoClues.map(item => renderIrisClueCard(item, true)).join("")}
+            `;
+        }
+
+        if (countryClues.length > 0) {
+            out += `
+                <div class="sub-divider">🗺️ Country Clues (${countryClues.length})</div>
+                ${countryClues.map(item => renderIrisClueCard(item, false)).join("")}
+            `;
+        }
+
+        if (!isLoading && panoClues.length === 0 && countryClues.length === 0) {
+            out += `
+                <div class="empty-clues-box">
+                    ℹ️ No official GeoGuessr Iris visual clues returned for ${escapeHtml(countryName || "this location")}. Use the general country guide below.
+                </div>
+            `;
+        }
+
+        return out;
     }
 
     function generatePlonkitRewrittenHtml(countryCode, countryName, state, coordinates) {
@@ -2587,6 +2651,21 @@ function getCountrySlug(countryName, countryCode) {
         border: 1px solid rgba(255, 255, 255, 0.1);
         margin-bottom: 10px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        position: relative;
+    }
+    .clue-look-hint {
+        position: absolute;
+        bottom: 6px;
+        right: 6px;
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(56, 189, 248, 0.4);
+        color: #38bdf8;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 4px;
+        pointer-events: none;
     }
     .clue-photo {
         width: 100%;
@@ -2869,32 +2948,9 @@ function getCountrySlug(countryName, countryCode) {
         `}
 
         <!-- =================== 2. STREET VIEW & IRIS AI CLUES =================== -->
-        <div class="section-divider section-divider-iris">🎯 2. Street View & Iris AI Clues</div>
-
-        ${isLoading ? `
-            <div class="loading-box">
-                <div class="spinner"></div>
-                <span>Fetching official GeoGuessr Iris clues...</span>
-            </div>
-        ` : ""}
-
-        <!-- Panorama Specific Clues -->
-        ${panoClues.length > 0 ? `
-            <div class="sub-divider">📍 Panorama Clues (${panoClues.length})</div>
-            ${panoClues.map(item => renderIrisClueCard(item, true)).join("")}
-        ` : ""}
-
-        <!-- Country Educational Clues -->
-        ${countryClues.length > 0 ? `
-            <div class="sub-divider">🗺️ Country Clues (${countryClues.length})</div>
-            ${countryClues.map(item => renderIrisClueCard(item, false)).join("")}
-        ` : ""}
-
-        ${(!isLoading && panoClues.length === 0 && countryClues.length === 0) ? `
-            <div class="empty-clues-box">
-                ℹ️ No official GeoGuessr Iris visual clues returned for ${countryName}. Use the general country guide below.
-            </div>
-        ` : ""}
+        <div id="section-iris-container">
+            ${renderIrisSectionContent(panoClues, countryClues, isLoading, countryName)}
+        </div>
 
         <!-- =================== 3. GENERAL COUNTRY CLUES (PLONKIT & GEOMASTR) =================== -->
         <div class="section-divider section-divider-meta">📚 3. General Country Clues (Plonkit & Geomastr)</div>
@@ -3136,8 +3192,31 @@ function getCountrySlug(countryName, countryCode) {
         const country = globalPlace.country || "";
         const countryCode = (globalPlace.countryCode || "").toUpperCase();
         const state = globalPlace.state || "";
+        const coords = globalCoordinates || { lat: 0, lng: 0 };
 
-        const html = generatePlonkitRewrittenHtml(countryCode, country, state, globalCoordinates);
+        // Cek apakah ronde masih sama dan iframe sudah memiliki DOM yang ter-render
+        const isSameRound = lastRenderedRoundCoords &&
+            lastRenderedRoundCoords.lat === coords.lat &&
+            lastRenderedRoundCoords.lng === coords.lng;
+
+        try {
+            const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+            const irisContainer = doc ? doc.getElementById("section-iris-container") : null;
+
+            if (isSameRound && irisContainer) {
+                // Saat Street View berpindah / berubah dalam ronde yang sama:
+                // HANYA refresh kontainer Iris Clues (Bagian 2) — Peta & marker Google Maps Bagian 1 TIDAK disentuh/reload sama sekali!
+                const panoClues = cachedGeoGuessrClues.panoClues || [];
+                const countryClues = cachedGeoGuessrClues.countryClues || [];
+                const isLoading = cachedGeoGuessrClues.loading;
+                irisContainer.innerHTML = renderIrisSectionContent(panoClues, countryClues, isLoading, country);
+                return;
+            }
+        } catch (_) {}
+
+        // Ronde baru pertama kali atau pembukaan pertama: render seluruh dokumen (Google Maps overview Bagian 1, Iris Bagian 2, Plonkit & Geomastr Bagian 3)
+        lastRenderedRoundCoords = { lat: coords.lat, lng: coords.lng };
+        const html = generatePlonkitRewrittenHtml(countryCode, country, state, coords);
         iframe.srcdoc = html;
     }
 
