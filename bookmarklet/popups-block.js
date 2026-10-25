@@ -104,14 +104,14 @@
     };
     let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
     let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
+    let roundId = 0;
+    let renderedRoundId = -1;
     let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
     let foundMap = null;
     let hint = "";
     let dotAdded = false;
     let currentMarker = null;
     let isRightMouseDown = false;
-    let isMiddleMouseDown = false;
-    let lastHToggle = 0;
     let currentAttachedDiv = null;
     let isScanning = false;
     let scanTimeout = null;
@@ -196,11 +196,11 @@
                 return;
             }
 
-            // Deteksi transisi ronde atau retry/fallback panorama
+            // Deteksi transisi ronde (jarak antar ronde baru di GeoGuessr biasanya > 2500m)
             let isNewRound = false;
             if (currentRoundCoords) {
                 const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
-                if (distFromCurrent > 500) {
+                if (distFromCurrent > 2500) {
                     if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
                         playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
                         if (playedRounds.length > 5) {
@@ -209,14 +209,15 @@
                     }
                     currentRoundCoords = { lat, lng };
                     isNewRound = true;
-                } else if (distFromCurrent > 1) {
-                    // Koordinat sedikit bergeser (retry panorama / fallback point saat panorama pertama gagal)
-                    currentRoundCoords = { lat, lng };
-                    isNewRound = true;
+                    roundId++;
+                } else {
+                    // Pergerakan Street View biasa dalam ronde yang sama (bukan ronde baru!)
+                    isNewRound = false;
                 }
             } else {
                 currentRoundCoords = { lat, lng };
                 isNewRound = true;
+                roundId++;
             }
 
             if (isNewRound) {
@@ -635,69 +636,28 @@
 
             if (targetEl !== currentAttachedDiv) {
                 if (currentAttachedDiv) {
-                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
                     currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
-                    currentAttachedDiv.removeEventListener("mousedown", handleMouseDown, true);
                     currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
-                    currentAttachedDiv.removeEventListener("mouseup", handleMouseUp, true);
                     currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
                     currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
-                    currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu, true);
                     currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
-                    if (currentAttachedDiv.parentElement) {
-                        currentAttachedDiv.parentElement.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-                    }
                 }
                 currentAttachedDiv = targetEl;
             }
 
-            targetEl.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
             targetEl.removeEventListener("wheel", handleWheelZoom);
-            targetEl.removeEventListener("mousedown", handleMouseDown, true);
             targetEl.removeEventListener("mousedown", handleMouseDown);
-            targetEl.removeEventListener("mouseup", handleMouseUp, true);
             targetEl.removeEventListener("mouseup", handleMouseUp);
             targetEl.removeEventListener("mouseleave", handleMouseLeave);
-            targetEl.removeEventListener("contextmenu", handleContextMenu, true);
             targetEl.removeEventListener("contextmenu", handleContextMenu);
 
-            targetEl.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-            targetEl.addEventListener("mousedown", handleMouseDown, true);
-            targetEl.addEventListener("mouseup", handleMouseUp, true);
+            targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
+            targetEl.addEventListener("mousedown", handleMouseDown);
+            targetEl.addEventListener("mouseup", handleMouseUp);
             targetEl.addEventListener("mouseleave", handleMouseLeave);
-            targetEl.addEventListener("contextmenu", handleContextMenu, true);
-
-            if (targetEl.parentElement) {
-                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-            }
+            targetEl.addEventListener("contextmenu", handleContextMenu);
         } catch (_) {}
     }
-
-    // Capture wheel globally on window so middle-hold + scroll is never swallowed
-    window.removeEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-    window.addEventListener("wheel", handleWheelZoom, { passive: false, capture: true });
-
-    // Prevent browser autoscroll circle icon when holding middle button
-    window.addEventListener("auxclick", (e) => {
-        if (e.button === 1 && dotAdded) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-    }, true);
-    window.addEventListener("pointerdown", (e) => {
-        if (e.button === 1) {
-            isMiddleMouseDown = true;
-            if (dotAdded) e.preventDefault();
-        }
-    }, true);
-    window.addEventListener("pointerup", (e) => {
-        if (e.button === 1) isMiddleMouseDown = false;
-    }, true);
-    window.addEventListener("blur", () => {
-        isMiddleMouseDown = false;
-        isRightMouseDown = false;
-    });
 
     function stopCurrentAction() {
         if (currentPanAnimId) {
@@ -725,158 +685,126 @@
         const scale = 256 * Math.pow(2, zoom);
         const dLng = (pixelX / scale) * 360;
         const latRad = (lat * Math.PI) / 180;
-        const dLat = -(pixelY / scale) * 360 * Math.cos(latRad);
+        const dLat = - (pixelY / scale) * 360 * Math.cos(latRad);
         return { dLat, dLng };
     }
 
     function humanPanAndZoom(map, targetLat, targetLng) {
-        try {
-            if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
+        if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
 
-            stopCurrentAction();
+        stopCurrentAction();
 
-            const startCenter = map.getCenter();
-            if (!startCenter || typeof startCenter.lat !== "function") return;
+        const center = map.getCenter();
+        if (!center) return;
 
-            const startLat = startCenter.lat();
-            const startLng = startCenter.lng();
-            const startZoom = map.getZoom();
+        const startLat = center.lat();
+        const startLng = center.lng();
+        const currentZoom = map.getZoom();
 
-            const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
+        const dist = getDistanceMeters(startLat, startLng, targetLat, targetLng);
+        let maxZoom = Math.min(17, currentZoom + 2);
+        if (dist > 2000000 && maxZoom < 4) maxZoom = 4;
 
-            let targetZoom = Math.min(17, startZoom + 2);
-            if (distanceMeters > 2000000 && targetZoom < 4) {
-                targetZoom = 4;
-            }
+        const signX = Math.random() < 0.5 ? -1 : 1;
+        const signY = Math.random() < 0.5 ? -1 : 1;
+        const offX = signX * (22 + Math.random() * 26);
+        const offY = signY * (18 + Math.random() * 24);
 
-            const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
-            const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
+        const latLngOffset = getPixelToLatLngOffset(offX, offY, targetLat, currentZoom);
+        const effectiveTargetLat = targetLat + latLngOffset.dLat;
+        const effectiveTargetLng = targetLng + latLngOffset.dLng;
 
-            const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
-            const panTargetLat = targetLat + panOffset.dLat;
-            const panTargetLng = targetLng + panOffset.dLng;
+        const totalLatDiff = effectiveTargetLat - startLat;
+        const totalLngDiff = getShortestLngDiff(effectiveTargetLng, startLng);
 
-            const dLat = panTargetLat - startLat;
-            const dLng = getShortestLngDiff(panTargetLng, startLng);
+        const duration = (dist < 50000)
+            ? (380 + Math.floor(Math.random() * 80))
+            : Math.min(1250, Math.max(700, 650 + 85 * Math.log10(dist + 1)));
 
-            const panDuration = distanceMeters < 50000
-                ? 380 + Math.floor(Math.random() * 80)
-                : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
+        const startTime = performance.now();
+        const curveDir = Math.random() < 0.5 ? -1 : 1;
+        const curveStrength = 0.025 + Math.random() * 0.035;
+        const perpLat = -totalLngDiff * curveStrength * curveDir;
+        const perpLng = totalLatDiff * curveStrength * curveDir;
 
-            const startTime = performance.now();
-
-            const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
-            const perpLat = -dLng * arcMultiplier;
-            const perpLng = dLat * arcMultiplier;
-
-            function panFrame(now) {
-                try {
-                    if (!isMapValid(map)) {
-                        stopCurrentAction();
-                        return;
-                    }
-
-                    const elapsed = now - startTime;
-                    const rawT = Math.min(1, elapsed / panDuration);
-                    const t = easeOutCubic(rawT);
-
-                    const arc = Math.sin(Math.PI * rawT);
-                    const currentL = startLat + dLat * t + perpLat * arc;
-                    const currentG = startLng + dLng * t + perpLng * arc;
-
-                    if (typeof google !== "undefined" && google.maps) {
-                        map.setCenter(new google.maps.LatLng(currentL, currentG));
-                    }
-
-                    if (rawT < 1) {
-                        currentPanAnimId = requestAnimationFrame(panFrame);
-                    } else {
-                        if (typeof google !== "undefined" && google.maps) {
-                            map.setCenter(new google.maps.LatLng(panTargetLat, panTargetLng));
-                        }
-                        currentPanAnimId = null;
-
-                        const humanViewPause = 350 + Math.floor(Math.random() * 100);
-                        currentZoomTimerId = setTimeout(() => {
-                            stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
-                        }, humanViewPause);
-                    }
-                } catch (_) {
-                    stopCurrentAction();
-                }
-            }
-
-            currentPanAnimId = requestAnimationFrame(panFrame);
-        } catch (_) {
-            stopCurrentAction();
-        }
-    }
-
-    function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
-        try {
+        function animatePan(currentTime) {
             if (!isMapValid(map)) {
                 stopCurrentAction();
                 return;
             }
 
-            const currentZ = map.getZoom();
-            if (currentZ < targetZoom) {
-                const nextZ = currentZ + 1;
-                const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
-                const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
-                const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            const ease = easeOutCubic(progress);
+            const arc = Math.sin(Math.PI * progress);
 
-                map.setZoom(nextZ);
-                if (typeof google !== "undefined" && google.maps) {
-                    map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
-                }
+            const curLat = startLat + totalLatDiff * ease + perpLat * arc;
+            const curLng = startLng + totalLngDiff * ease + perpLng * arc;
 
-                const scrollDelay = 340 + Math.floor(Math.random() * 90);
-                currentZoomTimerId = setTimeout(() => {
-                    stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
-                }, scrollDelay);
-            } else {
-                stopCurrentAction();
+            if (typeof google !== "undefined" && google.maps) {
+                map.setCenter(new google.maps.LatLng(curLat, curLng));
             }
-        } catch (_) {
+
+            if (progress < 1) {
+                currentPanAnimId = requestAnimationFrame(animatePan);
+            } else {
+                if (typeof google !== "undefined" && google.maps) {
+                    map.setCenter(new google.maps.LatLng(effectiveTargetLat, effectiveTargetLng));
+                }
+                currentPanAnimId = null;
+
+                const pauseBeforeZoom = 350 + Math.floor(Math.random() * 100);
+                currentZoomTimerId = setTimeout(() => {
+                    stepZoomPerlahan(map, targetLat, targetLng, maxZoom, offX, offY);
+                }, pauseBeforeZoom);
+            }
+        }
+
+        currentPanAnimId = requestAnimationFrame(animatePan);
+    }
+
+    function stepZoomPerlahan(map, targetLat, targetLng, maxZoom, offX, offY) {
+        if (!isMapValid(map)) {
+            stopCurrentAction();
+            return;
+        }
+
+        const z = map.getZoom();
+        if (z < maxZoom) {
+            const nextZoom = z + 1;
+            const jitterX = offX + (Math.random() - 0.5) * 12;
+            const jitterY = offY + (Math.random() - 0.5) * 12;
+            const offset = getPixelToLatLngOffset(jitterX, jitterY, targetLat, nextZoom);
+
+            map.setZoom(nextZoom);
+            if (typeof google !== "undefined" && google.maps) {
+                map.setCenter(new google.maps.LatLng(targetLat + offset.dLat, targetLng + offset.dLng));
+            }
+
+            const nextDelay = 340 + Math.floor(Math.random() * 90);
+            currentZoomTimerId = setTimeout(() => {
+                stepZoomPerlahan(map, targetLat, targetLng, maxZoom, jitterX, jitterY);
+            }, nextDelay);
+        } else {
             stopCurrentAction();
         }
     }
 
-    // =================== Wheel Zoom Handler (Hold Middle Button + Scroll) ===================
+    // =================== Wheel Zoom Handler ===================
     function handleWheelZoom(e) {
         try {
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-                if (!isMapValid(foundMap)) return;
-            }
-
-            // Mode zoom otomatis aktif saat tombol tengah di-hold sambil scroll wheel
-            const isMiddleHeld = isMiddleMouseDown || (e.buttons === 4) || ((e.buttons & 4) === 4);
-            if (!isMiddleHeld) return;
-
-            const lat = Number(globalCoordinates.lat);
-            const lng = Number(globalCoordinates.lng);
-            if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
-
-            e.preventDefault();
-            e.stopPropagation();
-            stopCurrentAction();
-
-            const delta = e.deltaY < 0 ? 1 : -1;
-            const currentZoom = (typeof foundMap.getZoom === "function") ? foundMap.getZoom() : 3;
-            const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
-
-            if (typeof foundMap.setZoom === "function") {
+            if (!isMapValid(foundMap) || !dotAdded) return;
+            if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
+                e.preventDefault();
+                e.stopPropagation();
+                stopCurrentAction();
+                const delta = e.deltaY < 0 ? 1 : -1;
+                const currentZoom = foundMap.getZoom();
+                const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
                 foundMap.setZoom(newZoom);
-            }
-            if (typeof google !== "undefined" && google.maps && google.maps.LatLng) {
-                const targetLatLng = new google.maps.LatLng(lat, lng);
-                if (typeof foundMap.setCenter === "function") foundMap.setCenter(targetLatLng);
-                if (typeof foundMap.panTo === "function") foundMap.panTo(targetLatLng);
-            } else {
-                if (typeof foundMap.setCenter === "function") foundMap.setCenter({ lat, lng });
-                if (typeof foundMap.panTo === "function") foundMap.panTo({ lat, lng });
+                if (typeof google !== "undefined" && google.maps) {
+                    foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
+                }
             }
         } catch (_) {}
     }
@@ -889,16 +817,13 @@
                 if (!isMapValid(foundMap)) return;
             }
 
-            if (e.button === 1) {
-                isMiddleMouseDown = true;
-                if (dotAdded) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (globalCoordinates.lat && globalCoordinates.lng) {
-                        humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
-                    }
-                    return;
+            if (e.button === 1 && dotAdded) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (globalCoordinates.lat && globalCoordinates.lng) {
+                    humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
                 }
+                return;
             }
 
             if (e.button === 2 && dotAdded) {
@@ -914,9 +839,6 @@
 
     function handleMouseUp(e) {
         try {
-            if (e.button === 1) {
-                isMiddleMouseDown = false;
-            }
             if (e.button === 2) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -926,7 +848,6 @@
 
     function handleMouseLeave() {
         try {
-            isMiddleMouseDown = false;
             if (isRightMouseDown) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -2419,23 +2340,14 @@
         const country = globalPlace.country || "";
         const countryCode = (globalPlace.countryCode || "").toUpperCase();
         const state = globalPlace.state || "";
-        const coords = globalCoordinates || { lat: 0, lng: 0 };
-        const lat = Number(coords.lat) || 0;
-        const lng = Number(coords.lng) || 0;
-
-        // Cek apakah ronde masih sama jika koordinat tebakan ronde masih identik
-        const isSameRound = Boolean(
-            lastRenderedRoundCoords &&
-            Math.abs(lastRenderedRoundCoords.lat - lat) < 0.00001 &&
-            Math.abs(lastRenderedRoundCoords.lng - lng) < 0.00001
-        );
+        const coords = currentRoundCoords || globalCoordinates || { lat: 0, lng: 0 };
 
         const panoClues = cachedGeoGuessrClues.panoClues || [];
         const countryClues = cachedGeoGuessrClues.countryClues || [];
         const isLoading = cachedGeoGuessrClues.loading;
 
-        if (isSameRound && iframe.srcdoc) {
-            // Peta (Bagian 1) TIDAK DI-RELOAD sama sekali saat Street View / pano berubah!
+        // Jika ronde masih sama (roundId sama) dan iframe sudah memiliki srcdoc, JANGAN RELOAD PETA!
+        if (renderedRoundId === roundId && iframe.srcdoc) {
             // Hanya update Iris AI Clues (Bagian 2) via postMessage & direct DOM fallback
             const irisHtml = renderIrisSectionContent(panoClues, countryClues, isLoading, country);
             try {
@@ -2451,8 +2363,9 @@
             return;
         }
 
-        // Ronde baru: render seluruh dokumen termasuk Google Maps overview
-        lastRenderedRoundCoords = { lat, lng };
+        // Ronde baru pertama kali dimuat: render seluruh dokumen termasuk Google Maps overview
+        renderedRoundId = roundId;
+        lastRenderedRoundCoords = { lat: coords.lat, lng: coords.lng };
         try {
             const html = generatePlonkitRewrittenHtml(countryCode, country, state, coords);
             iframe.srcdoc = html;
@@ -2490,8 +2403,8 @@
     
 
 
-        // =================== Keyboard Listener (Shortcut G & H) ===================
-    function handleGlobalKeyDown(e) {
+        // =================== Keyboard Listener (Shortcut G & H - Commit Terst) ===================
+    document.addEventListener("keydown", (e) => {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
             if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
@@ -2499,23 +2412,17 @@
             }
             const key = e.key ? e.key.toLowerCase() : "";
             if (key === "h") {
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
                 togglePlonkitPanel();
-                return;
             } else if (key === "g") {
-                dotAdded = !dotAdded;
+                dotAdded = true;
                 syncTermsText();
-                if (!dotAdded) {
-                    isRightMouseDown = false;
-                    clearMarker();
-                }
+            } else if (key !== " " && !isRightMouseDown) {
+                dotAdded = false;
+                syncTermsText();
+                clearMarker();
             }
         } catch (_) {}
-    }
-
-    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    });
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
