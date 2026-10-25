@@ -1,2754 +1,1019 @@
-/**
- * AdGuards - Popups & Geo Tracker Bookmarklet Script
- * Hosted via GitHub Pages: https://laravelwebdev.github.io/AdGuards/bookmarklet/popups-block.js
- * Repo: https://github.com/laravelwebdev/AdGuards
- *
- * Jalankan via Bookmarklet browser tanpa memerlukan ekstensi.
- */
+// =================== Global Variables ===================
+let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
+let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "" };
+let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
+let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
+let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
+let foundMap = null;
+let hint = "";
+let dotAdded = false;
+let currentMarker = null;
+let isRightMouseDown = false;
+let currentAttachedDiv = null;
+let isScanning = false;
+let scanTimeout = null;
 
-(function () {
-    "use strict";
+// =================== Helper to Save ===================
+function saveCoordinates() {
+    try {
+        localStorage.setItem("globalCoordinates", JSON.stringify(globalCoordinates));
+        localStorage.setItem("globalPlace", JSON.stringify(globalPlace));
+    } catch (_) {}
+}
 
-    // Bersihkan listener lama jika script dijalankan / di-update ulang tanpa reload tab
-    if (window.__ADGUARDS_CLEANUP__) {
-        try { window.__ADGUARDS_CLEANUP__(); } catch (_) {}
+// =================== Distance & Game Tracking Helpers ===================
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371e3; // radius bumi dalam meter
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+function isAlreadyPlayed(lat, lng) {
+    return playedRounds.some(round => getDistanceMeters(round.lat, round.lng, lat, lng) < 500);
+}
+
+function getGameIdFromUrl() {
+    try {
+        const match = location.pathname.match(/\/(game|challenge|duels|live-challenge|party)\/([a-zA-Z0-9_-]+)/);
+        return match ? match[2] : location.pathname;
+    } catch (_) {
+        return "";
     }
-    window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__ = true;
+}
 
-    // =================== Stealth Feedback Indicator ===================
-    // Tanda aktif super siluman: Tanpa alert/popup, hanya feedback mikro yang diketahui pemilik
-    function triggerStealthActiveIndicator() {
+function checkGameReset() {
+    const gameId = getGameIdFromUrl();
+    if (gameId && currentGameId && gameId !== currentGameId) {
+        playedRounds = [];
+        currentRoundCoords = null;
+    }
+    currentGameId = gameId;
+}
+
+function updateHashSilently(newHint) {
+    if (!newHint) return;
+    try {
+        const newUrl = location.pathname + location.search + "#" + newHint;
+        if (window.history && typeof History.prototype.replaceState === "function") {
+            History.prototype.replaceState.call(window.history, window.history.state, "", newUrl);
+        } else {
+            window.history.replaceState(window.history.state, "", newUrl);
+        }
+    } catch (e) {
         try {
-            // 1. Indikator di teks "Terms" (Pojok Kanan Bawah Peta - Paling Alami & Stealth)
-            // Teks berganti sekejap menjadi "Terms ✓" dengan kilau cyan lembut selama 900ms
-            const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
-            links.forEach(link => {
-                const originalColor = link.style.color;
-                const originalShadow = link.style.textShadow;
-                link.textContent = "Terms ✓";
-                link.style.transition = "color 0.2s ease, text-shadow 0.2s ease";
-                link.style.color = "#38bdf8";
-                link.style.textShadow = "0 0 6px rgba(56, 189, 248, 0.8)";
-                setTimeout(() => {
-                    link.textContent = dotAdded ? "Map Terms" : "Terms";
-                    link.style.color = originalColor || "";
-                    link.style.textShadow = originalShadow || "";
-                }, 900);
-            });
+            location.hash = newHint;
+        } catch (_) {}
+    }
+}
 
-            // 2. Indikator Tab Title (Title Pulse 700ms)
-            // Menambahkan dot halus di depan judul tab tanpa disadari penonton/stream
-            const currentTitle = document.title;
-            if (!currentTitle.startsWith("• ")) {
-                document.title = "• " + currentTitle;
-                setTimeout(() => {
-                    if (document.title.startsWith("• ")) {
-                        document.title = document.title.replace(/^•\s*/, "");
-                    }
-                }, 700);
-            }
-
-            // 3. Indikator Border Mikro Layar (1.5px Subtle Edge Flash 220ms)
-            // Border redup 1.5px di pinggir layar yang langsung memudar halus, tampak seperti refresh layar
-            let flash = document.getElementById("__adguards_stealth_flash");
-            if (!flash) {
-                flash = document.createElement("div");
-                flash.id = "__adguards_stealth_flash";
-                flash.style.position = "fixed";
-                flash.style.top = "0";
-                flash.style.left = "0";
-                flash.style.width = "100vw";
-                flash.style.height = "100vh";
-                flash.style.pointerEvents = "none";
-                flash.style.zIndex = "2147483647";
-                flash.style.boxSizing = "border-box";
-                flash.style.border = "2px solid rgba(56, 189, 248, 0.45)";
-                flash.style.boxShadow = "inset 0 0 12px rgba(56, 189, 248, 0.2)";
-                flash.style.opacity = "0";
-                flash.style.transition = "opacity 0.25s ease-out";
-                (document.body || document.documentElement).appendChild(flash);
-            }
-            flash.style.opacity = "1";
+// =================== Stealth Feedback Indicator ===================
+// Tanda aktif super siluman: Tanpa alert/popup, hanya feedback mikro yang diketahui pemilik
+function triggerStealthActiveIndicator() {
+    try {
+        // 1. Indikator di teks "Terms" (Pojok Kanan Bawah Peta - Paling Alami & Stealth)
+        const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+        links.forEach(link => {
+            const originalColor = link.style.color;
+            const originalShadow = link.style.textShadow;
+            link.textContent = "Terms ✓";
+            link.style.transition = "color 0.2s ease, text-shadow 0.2s ease";
+            link.style.color = "#38bdf8";
+            link.style.textShadow = "0 0 6px rgba(56, 189, 248, 0.8)";
             setTimeout(() => {
-                if (flash) flash.style.opacity = "0";
-            }, 220);
+                link.textContent = dotAdded ? "Map Terms" : "Terms";
+                link.style.color = originalColor || "";
+                link.style.textShadow = originalShadow || "";
+            }, 900);
+        });
 
-            // 4. Console log diam-diam
-            console.log("%c🛡️ AdGuards: Active & Synchronized ✓", "color: #38bdf8; font-weight: bold;");
-        } catch (_) {}
-    }
-    window.__ADGUARDS_SHOW_TOAST__ = triggerStealthActiveIndicator;
-
-    // =================== Global Variables ===================
-    let globalCoordinates = JSON.parse(localStorage.getItem("globalCoordinates")) || { lat: 0, lng: 0 };
-    let globalPlace = JSON.parse(localStorage.getItem("globalPlace")) || { country: "", state: "", countryCode: "" };
-    let plonkitActive = JSON.parse(localStorage.getItem("plonkitActive")) || false;
-    let plonkitIframeEl = null;
-    let currentPanoId = "";
-    let activeStreetViewPanorama = null;
-    let lastRenderedRoundCoords = null;
-    let cachedGeoGuessrClues = {
-        key: "",
-        countryCode: "",
-        panoId: "",
-        loading: false,
-        countryClues: [],
-        panoClues: [],
-        error: null
-    };
-    let playedRounds = []; // Menyimpan riwayat koordinat ronde yang sudah dimainkan dalam game saat ini
-    let currentRoundCoords = null; // Menyimpan koordinat ronde aktif / prefetch
-    let roundId = 1;
-    let renderedRoundId = 0;
-    let lastHToggle = 0;
-    let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
-    let foundMap = null;
-    let hint = "";
-    let dotAdded = true;
-    let currentMarker = null;
-    let gMarkerActive = false;
-    let isRightMouseDown = false;
-    let isMiddleMouseDown = false;
-    let currentAttachedDiv = null;
-    let isScanning = false;
-    let scanTimeout = null;
-
-    // =================== Helper to Save ===================
-    function saveCoordinates() {
-        try {
-            localStorage.setItem("globalCoordinates", JSON.stringify(globalCoordinates));
-            localStorage.setItem("globalPlace", JSON.stringify(globalPlace));
-        } catch (_) {}
-    }
-
-    // =================== Distance & Game Tracking Helpers ===================
-    function getDistanceMeters(lat1, lng1, lat2, lng2) {
-        const R = 6371e3; // radius bumi dalam meter
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLng = (lng2 - lng1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLng / 2) * Math.sin(dLng / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-    }
-
-    function isAlreadyPlayed(lat, lng) {
-        return playedRounds.some(round => getDistanceMeters(round.lat, round.lng, lat, lng) < 500);
-    }
-
-    function getGameIdFromUrl() {
-        try {
-            const match = location.pathname.match(/\/(game|challenge|duels|live-challenge|party)\/([a-zA-Z0-9_-]+)/);
-            return match ? match[2] : location.pathname;
-        } catch (_) {
-            return "";
+        // 2. Indikator Tab Title (Title Pulse 700ms)
+        const currentTitle = document.title;
+        if (!currentTitle.startsWith("• ")) {
+            document.title = "• " + currentTitle;
+            setTimeout(() => {
+                if (document.title.startsWith("• ")) {
+                    document.title = document.title.replace(/^•\s*/, "");
+                }
+            }, 700);
         }
-    }
 
-    function checkGameReset() {
-        const gameId = getGameIdFromUrl();
-        if (gameId && currentGameId && gameId !== currentGameId) {
-            playedRounds = [];
-            currentRoundCoords = null;
-            lastRenderedRoundCoords = null;
-            roundId++;
+        // 3. Indikator Border Mikro Layar (1.5px Subtle Edge Flash 220ms)
+        let flash = document.getElementById("__adguards_stealth_flash");
+        if (!flash) {
+            flash = document.createElement("div");
+            flash.id = "__adguards_stealth_flash";
+            flash.style.position = "fixed";
+            flash.style.top = "0";
+            flash.style.left = "0";
+            flash.style.width = "100vw";
+            flash.style.height = "100vh";
+            flash.style.pointerEvents = "none";
+            flash.style.zIndex = "2147483647";
+            flash.style.boxSizing = "border-box";
+            flash.style.border = "2px solid rgba(56, 189, 248, 0.45)";
+            flash.style.boxShadow = "inset 0 0 12px rgba(56, 189, 248, 0.2)";
+            flash.style.opacity = "0";
+            flash.style.transition = "opacity 0.25s ease-out";
+            (document.body || document.documentElement).appendChild(flash);
         }
-        currentGameId = gameId;
-    }
+        flash.style.opacity = "1";
+        setTimeout(() => {
+            if (flash) flash.style.opacity = "0";
+        }, 220);
 
-    function updateHashSilently(newHint) {
-        if (!newHint) return;
-        try {
-            const newUrl = location.pathname + location.search + "#" + newHint;
-            if (window.history && typeof History.prototype.replaceState === "function") {
-                History.prototype.replaceState.call(window.history, window.history.state, "", newUrl);
-            } else {
-                window.history.replaceState(window.history.state, "", newUrl);
-            }
-        } catch (e) {
-            try {
-                location.hash = newHint;
-            } catch (_) {}
-        }
-    }
+        // 4. Console log diam-diam
+        console.log("%c🛡️ AdGuards: Active & Synchronized ✓", "color: #38bdf8; font-weight: bold;");
+    } catch (_) {}
+}
 
-    // =================== Coordinate & Location Extractor ===================
-    function extractCoordsAndHint(interceptedResult) {
-        if (!interceptedResult || typeof interceptedResult !== "string") return;
-        try {
-            const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
-            const countryPattern = /"[A-Z]{2}"/g;
-            const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
+// =================== Coordinate & Location Extractor ===================
+function extractCoordsAndHint(interceptedResult) {
+    if (!interceptedResult || typeof interceptedResult !== "string") return;
+    try {
+        const pattern = /-?\d+\.\d+,-?\d+\.\d+/g;
+        const countryPattern = /"[A-Z]{2}"/g;
+        const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
 
-            const _pm = interceptedResult.match(pattern); const match = _pm ? _pm[0] : null;
-            if (!match) return;
+        const match = interceptedResult.match(pattern)?.[0];
+        if (!match) return;
 
-            const [lat, lng] = match.split(",").map(Number);
-            if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+        const [lat, lng] = match.split(",").map(Number);
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
 
-            checkGameReset();
+        checkGameReset();
 
-            // Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya
-            if (isAlreadyPlayed(lat, lng)) {
-                return;
-            }
-
-            // Deteksi transisi ronde (jarak antar ronde baru di GeoGuessr biasanya > 2500m)
-            let isNewRound = false;
-            if (currentRoundCoords) {
-                const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
-                if (distFromCurrent > 2500) {
-                    if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
-                        playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
-                        if (playedRounds.length > 5) {
-                            playedRounds.shift();
-                        }
-                    }
-                    currentRoundCoords = { lat, lng };
-                    isNewRound = true;
-                    roundId++;
-                } else {
-                    // Pergerakan Street View biasa dalam ronde yang sama (bukan ronde baru!)
-                    isNewRound = false;
-                }
-            } else {
-                currentRoundCoords = { lat, lng };
-                isNewRound = true;
-                roundId++;
-            }
-
-            if (isNewRound) {
-                globalCoordinates.lat = lat;
-                globalCoordinates.lng = lng;
-                lastRenderedRoundCoords = null;
-            }
-
-            const _cm = interceptedResult.match(countryPattern); const countryMatch = _cm ? _cm[0] : null;
-            if (countryMatch) {
-                const code = countryMatch.replace(/"/g, "");
-                globalPlace.countryCode = code;
-                try {
-                    globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(code);
-                } catch (_) {
-                    globalPlace.country = code;
-                }
-            } else if (isNewRound) {
-                globalPlace.country = "";
-                globalPlace.countryCode = "";
-            }
-
-            const _sm = interceptedResult.match(statePattern); const stateMatch = (_sm && _sm[1]) ? _sm[1].trim() : "";
-            if (stateMatch) {
-                globalPlace.state = stateMatch;
-            } else if (isNewRound) {
-                globalPlace.state = "";
-            }
-
-            // Extract panoId from API response or Street View metadata
-            const panoMatch = interceptedResult.match(/"(?:panoId|panoramaId)"\s*:\s*"([^"]+)"/i) ||
-                              interceptedResult.match(/"pano"\s*:\s*"([^"]+)"/i) ||
-                              interceptedResult.match(/\["([a-zA-Z0-9_-]{22,64})"/);
-            if (panoMatch && panoMatch[1]) {
-                const newPano = panoMatch[1];
-                if (newPano !== currentPanoId) {
-                    currentPanoId = newPano;
-                }
-            }
-
-
-
-            const country = globalPlace.country || "";
-            const state = globalPlace.state || "";
-            const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
-
-            if (targetPlace) {
-                hint = shiftAfterComma(targetPlace);
-                if (isHintChanged(hint)) {
-                    updateHashSilently(hint);
-                }
-            }
-            saveCoordinates();
-            if (typeof triggerCluesFetch === "function") {
-                triggerCluesFetch();
-            }
-            if (typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-        } catch (_) {}
-    }
-
-    // =================== Intercept XHR & Fetch (Anti Gagal) ===================
-    const originalOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (method, url) {
-        try {
-            if (
-                typeof method === "string" && method.toUpperCase() === "POST" &&
-                typeof url === "string" &&
-                (url.includes("MapsJsInternalService/GetMetadata") ||
-                 url.includes("MapsJsInternalService/SingleImageSearch") ||
-                 url.includes("/api/v3/games/") ||
-                 url.includes("/api/v4/"))
-            ) {
-                this.addEventListener("load", function () {
-                    try {
-                        if (this.responseType && this.responseType !== "" && this.responseType !== "text") return;
-                        extractCoordsAndHint(this.responseText);
-                    } catch (_) {}
-                });
-            }
-        } catch (_) {}
-        return originalOpen.apply(this, arguments);
-    };
-
-    if (typeof window.fetch === "function" && !window.fetch.__adguards_hooked) {
-        const originalFetch = window.fetch;
-        window.fetch = async function (...args) {
-            const response = await originalFetch.apply(this, args);
-            try {
-                const url = typeof args[0] === "string" ? args[0] : ((args[0] && args[0].url) || "");
-                if (
-                    url.includes("MapsJsInternalService/GetMetadata") ||
-                    url.includes("MapsJsInternalService/SingleImageSearch") ||
-                    url.includes("/api/v3/games/") ||
-                    url.includes("/api/v4/")
-                ) {
-                    const clone = response.clone();
-                    clone.text().then(text => {
-                        extractCoordsAndHint(text);
-                    }).catch(() => {});
-                }
-            } catch (_) {}
-            return response;
-        };
-        window.fetch.__adguards_hooked = true;
-    }
-
-    function isHintChanged(newHint) {
-        if (!newHint || newHint.trim() === "" || newHint.length < 2) return false;
-        const current = location.hash ? location.hash.substring(1) : "";
-        if (!current || current.length < 2) return true;
-        const newCore = newHint.substring(1).toLowerCase();
-        const currentCore = current.substring(1).toLowerCase();
-        return newCore !== currentCore;
-    }
-
-    // =================== Hook Google Maps Constructor & Prototype ===================
-    function hookGoogleMapConstructor() {
-        try {
-            if (typeof google !== "undefined" && google.maps && google.maps.Map && !google.maps.Map.__adguards_hooked) {
-                const originalMapCtor = google.maps.Map;
-                google.maps.Map = function (...args) {
-                    const instance = new originalMapCtor(...args);
-                    try {
-                        setTimeout(() => {
-                            if (isMapValid(instance)) {
-                                foundMap = instance;
-                                attachMapListeners();
-                            }
-                        }, 50);
-                    } catch (_) {}
-                    return instance;
-                };
-                Object.assign(google.maps.Map, originalMapCtor);
-                google.maps.Map.prototype = originalMapCtor.prototype;
-                google.maps.Map.__adguards_hooked = true;
-            }
-        } catch (_) {}
-    }
-
-    function hookGoogleMapPrototype() {
-        try {
-            if (typeof google !== "undefined" && google.maps && google.maps.Map && google.maps.Map.prototype) {
-                const proto = google.maps.Map.prototype;
-                if (!proto.__adguards_proto_hooked) {
-                    proto.__adguards_proto_hooked = true;
-                    function checkAndSetFoundMap(instance) {
-                        try {
-                            if (isMapValid(instance) && foundMap !== instance) {
-                                const div = instance.getDiv();
-                                if (div && (
-                                    div.classList.contains("widget-scene-canvas") ||
-                                    div.closest(".widget-scene") ||
-                                    div.id === "hint-map-canvas" ||
-                                    div.closest("#hint-map-canvas")
-                                )) {
-                                    return;
-                                }
-                                foundMap = instance;
-                                attachMapListeners();
-                            }
-                        } catch (_) {}
-                    }
-                    const origGetCenter = proto.getCenter;
-                    proto.getCenter = function (...args) {
-                        checkAndSetFoundMap(this);
-                        return origGetCenter.apply(this, args);
-                    };
-                    const origGetZoom = proto.getZoom;
-                    proto.getZoom = function (...args) {
-                        checkAndSetFoundMap(this);
-                        return origGetZoom.apply(this, args);
-                    };
-                    const origSetCenter = proto.setCenter;
-                    proto.setCenter = function (...args) {
-                        checkAndSetFoundMap(this);
-                        return origSetCenter.apply(this, args);
-                    };
-                    const origPanTo = proto.panTo;
-                    proto.panTo = function (...args) {
-                        checkAndSetFoundMap(this);
-                        return origPanTo.apply(this, args);
-                    };
-                    const origSetZoom = proto.setZoom;
-                    proto.setZoom = function (...args) {
-                        checkAndSetFoundMap(this);
-                        return origSetZoom.apply(this, args);
-                    };
-                }
-            }
-        } catch (_) {}
-    }
-
-    function hookStreetViewPanorama() {
-        try {
-            if (typeof google !== "undefined" && google.maps) {
-                if (google.maps.StreetViewPanorama && !google.maps.StreetViewPanorama.__adguards_hooked) {
-                    const origPano = google.maps.StreetViewPanorama;
-                    google.maps.StreetViewPanorama = function (...args) {
-                        const inst = new origPano(...args);
-                        activeStreetViewPanorama = inst;
-                        try {
-                            inst.addListener("pano_changed", function () {
-                                activeStreetViewPanorama = inst;
-                                const p = inst.getPano();
-                                if (p && p !== currentPanoId) {
-                                    currentPanoId = p;
-                                    if (typeof triggerCluesFetch === "function") triggerCluesFetch();
-                                }
-                            });
-                        } catch (_) {}
-                        return inst;
-                    };
-                    Object.assign(google.maps.StreetViewPanorama, origPano);
-                    google.maps.StreetViewPanorama.prototype = origPano.prototype;
-                    google.maps.StreetViewPanorama.__adguards_hooked = true;
-                }
-                if (google.maps.StreetViewPanorama && google.maps.StreetViewPanorama.prototype && !google.maps.StreetViewPanorama.prototype.__adguards_pano_hooked) {
-                    const proto = google.maps.StreetViewPanorama.prototype;
-                    proto.__adguards_pano_hooked = true;
-                    const origSetPano = proto.setPano;
-                    proto.setPano = function (pano) {
-                        activeStreetViewPanorama = this;
-                        if (typeof pano === "string" && pano && pano !== currentPanoId) {
-                            currentPanoId = pano;
-                            if (typeof triggerCluesFetch === "function") triggerCluesFetch();
-                        }
-                        return origSetPano.apply(this, arguments);
-                    };
-                }
-            }
-        } catch (_) {}
-    }
-
-    function findActiveStreetViewPanorama() {
-        if (activeStreetViewPanorama) return activeStreetViewPanorama;
-        try {
-            for (const k in window) {
-                try {
-                    const val = window[k];
-                    if (val && typeof val.setPov === "function" && typeof val.getPano === "function") {
-                        activeStreetViewPanorama = val;
-                        return val;
-                    }
-                } catch (_) {}
-            }
-        } catch (_) {}
-        return null;
-    }
-
-    let currentPovAnimId = null;
-
-    function smoothRotatePov(targetHeading, targetPitch, duration) {
-        try {
-            const pano = activeStreetViewPanorama || findActiveStreetViewPanorama();
-            if (!pano || typeof pano.getPov !== "function" || typeof pano.setPov !== "function") return;
-
-            if (currentPovAnimId) {
-                cancelAnimationFrame(currentPovAnimId);
-                currentPovAnimId = null;
-            }
-
-            const currentPov = pano.getPov() || { heading: 0, pitch: 0 };
-            const startHeading = (typeof currentPov.heading === "number") ? currentPov.heading : 0;
-            const startPitch = (typeof currentPov.pitch === "number") ? currentPov.pitch : 0;
-
-            const tHeading = Number(targetHeading) || 0;
-            const tPitch = Math.max(-85, Math.min(85, Number(targetPitch) || 0));
-
-            // Hitung lintasan sudut terpendek (-180 derajat s.d. +180 derajat)
-            let diffHeading = ((tHeading - startHeading + 540) % 360) - 180;
-            let diffPitch = tPitch - startPitch;
-
-            // Jika sudut sudah pas, tidak perlu rotasi
-            if (Math.abs(diffHeading) < 0.5 && Math.abs(diffPitch) < 0.5) return;
-
-            // Durasi natural manusia: 380ms untuk sudut kecil, maks 850ms untuk putar 180 derajat
-            const angleDist = Math.abs(diffHeading);
-            const totalDuration = duration || Math.min(850, Math.max(380, Math.round(angleDist * 3.6)));
-            const startTime = performance.now();
-
-            // Smooth cubic ease-out (percepatan awal halus lalu melambat natural seperti tangan manusia memutar)
-            function easeOutCubic(t) {
-                return 1 - Math.pow(1 - t, 3);
-            }
-
-            function step(now) {
-                const elapsed = now - startTime;
-                const progress = Math.min(1, elapsed / totalDuration);
-                const eased = easeOutCubic(progress);
-
-                const currentH = (startHeading + diffHeading * eased + 360) % 360;
-                const currentP = startPitch + diffPitch * eased;
-
-                pano.setPov({
-                    heading: currentH,
-                    pitch: currentP
-                });
-
-                if (progress < 1) {
-                    currentPovAnimId = requestAnimationFrame(step);
-                } else {
-                    currentPovAnimId = null;
-                    pano.setPov({
-                        heading: (tHeading % 360 + 360) % 360,
-                        pitch: tPitch
-                    });
-                }
-            }
-
-            currentPovAnimId = requestAnimationFrame(step);
-        } catch (_) {}
-    }
-
-    window.__adguards_focus_clue = function (heading, pitch) {
-        smoothRotatePov(heading, pitch);
-    };
-
-    // =================== Map Helpers & Lifecycle Detection ===================
-    function isGoogleMap(obj) {
-        try {
-            return !!(obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function" && typeof obj.getDiv === "function");
-        } catch (_) {
-            return false;
-        }
-    }
-
-    function isMapValid(map) {
-        if (!isGoogleMap(map)) return false;
-        try {
-            const div = map.getDiv();
-            if (!div || !document.body || !document.body.contains(div) || div.isConnected === false) return false;
-            if (div.id === "hint-map-canvas" || div.closest("#hint-map-canvas")) return false;
-            const center = map.getCenter();
-            return !!(center && typeof center.lat === "function" && !isNaN(center.lat()));
-        } catch (_) {
-            return false;
-        }
-    }
-
-    function findMapInFiber(fiber, depth = 0) {
-        if (!fiber || depth > 45) return null;
-        try {
-            // 1. Check memoizedProps
-            const props = fiber.memoizedProps;
-            if (props) {
-                if (isGoogleMap(props.map) && isMapValid(props.map)) return props.map;
-                for (const k in props) {
-                    try {
-                        if (isGoogleMap(props[k]) && isMapValid(props[k])) return props[k];
-                    } catch (_) {}
-                }
-            }
-            // 2. Check memoizedState (hooks: useState, useRef)
-            let hook = fiber.memoizedState;
-            while (hook) {
-                try {
-                    if (isGoogleMap(hook.memoizedState) && isMapValid(hook.memoizedState)) return hook.memoizedState;
-                    if (hook.memoizedState && typeof hook.memoizedState === "object") {
-                        if (isGoogleMap(hook.memoizedState.current) && isMapValid(hook.memoizedState.current)) return hook.memoizedState.current;
-                        if (isGoogleMap(hook.memoizedState.map) && isMapValid(hook.memoizedState.map)) return hook.memoizedState.map;
-                    }
-                } catch (_) {}
-                hook = hook.next;
-            }
-            // 3. Check stateNode
-            if (fiber.stateNode) {
-                try {
-                    if (isGoogleMap(fiber.stateNode.map) && isMapValid(fiber.stateNode.map)) return fiber.stateNode.map;
-                    if (isGoogleMap(fiber.stateNode._map) && isMapValid(fiber.stateNode._map)) return fiber.stateNode._map;
-                } catch (_) {}
-            }
-            return findMapInFiber(fiber.child, depth + 1) || findMapInFiber(fiber.sibling, depth + 1);
-        } catch (_) {
-            return null;
-        }
-    }
-
-    function requestScanForMap(delay = 250) {
-        if (scanTimeout) return;
-        scanTimeout = setTimeout(() => {
-            scanTimeout = null;
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-            }
-        }, delay);
-    }
-
-    function scanForMap() {
-        if (isMapValid(foundMap)) {
-            attachMapListeners();
+        // Cek jika koordinat ini adalah ronde yang sudah selesai dimainkan sebelumnya.
+        if (isAlreadyPlayed(lat, lng)) {
             return;
         }
-        if (isScanning) return;
-        isScanning = true;
 
-        try {
-            // 0. Cek .gm-style container langsung pada guess map
-            const gmStyleEl = document.querySelector('div[data-qa="guess-map"] .gm-style, div[class*="guess-map"] .gm-style, div[class*="styles_map__"] .gm-style');
-            if (gmStyleEl && gmStyleEl.parentElement) {
-                const mapDiv = gmStyleEl.parentElement;
-                const fKey = Object.keys(mapDiv).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-                if (fKey) {
-                    const m = findMapInFiber(mapDiv[fKey]);
-                    if (isMapValid(m)) {
-                        foundMap = m;
-                        attachMapListeners();
-                        isScanning = false;
-                        return;
+        // Deteksi transisi ronde atau retry/fallback panorama
+        let isNewRound = false;
+        if (currentRoundCoords) {
+            const distFromCurrent = getDistanceMeters(currentRoundCoords.lat, currentRoundCoords.lng, lat, lng);
+            if (distFromCurrent > 500) {
+                if (!isAlreadyPlayed(currentRoundCoords.lat, currentRoundCoords.lng)) {
+                    playedRounds.push({ lat: currentRoundCoords.lat, lng: currentRoundCoords.lng });
+                    if (playedRounds.length > 5) {
+                        playedRounds.shift();
                     }
                 }
+                currentRoundCoords = { lat, lng };
+                isNewRound = true;
+            } else if (distFromCurrent > 1) {
+                currentRoundCoords = { lat, lng };
+                isNewRound = true;
             }
+        } else {
+            currentRoundCoords = { lat, lng };
+            isNewRound = true;
+        }
 
-            // 1. Cek window object secara langsung
-            for (const wk in window) {
+        if (isNewRound) {
+            globalCoordinates.lat = lat;
+            globalCoordinates.lng = lng;
+        }
+
+        const countryMatch = interceptedResult.match(countryPattern)?.[0];
+        if (countryMatch) {
+            try {
+                globalPlace.country = new Intl.DisplayNames(["en"], { type: "region" }).of(countryMatch.replace(/"/g, ""));
+            } catch (_) {
+                globalPlace.country = countryMatch.replace(/"/g, "");
+            }
+        } else if (isNewRound) {
+            globalPlace.country = "";
+        }
+
+        const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
+        if (stateMatch) {
+            globalPlace.state = stateMatch;
+        } else if (isNewRound) {
+            globalPlace.state = "";
+        }
+
+        const country = globalPlace.country || "";
+        const state = globalPlace.state || "";
+        const targetPlace = (country.toUpperCase() === 'INDONESIA') ? state : country;
+
+        if (targetPlace) {
+            hint = shiftAfterComma(targetPlace);
+            if (isHintChanged(hint)) {
+                updateHashSilently(hint);
+            }
+        }
+        saveCoordinates();
+    } catch (_) {}
+}
+
+// =================== Intercept XHR & Fetch (Anti Gagal) ===================
+var originalOpen = XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open = function (method, url) {
+    try {
+        if (
+            typeof method === "string" && method.toUpperCase() === "POST" &&
+            typeof url === "string" &&
+            (url.includes("MapsJsInternalService/GetMetadata") ||
+             url.includes("MapsJsInternalService/SingleImageSearch") ||
+             url.includes("/api/v3/games/") ||
+             url.includes("/api/v4/"))
+        ) {
+            this.addEventListener("load", function () {
                 try {
-                    const wVal = window[wk];
-                    if (isGoogleMap(wVal) && isMapValid(wVal)) {
-                        foundMap = wVal;
-                        attachMapListeners();
-                        isScanning = false;
-                        return;
-                    }
+                    if (this.responseType && this.responseType !== "" && this.responseType !== "text") return;
+                    extractCoordsAndHint(this.responseText);
                 } catch (_) {}
-            }
+            });
+        }
+    } catch (_) {}
+    return originalOpen.apply(this, arguments);
+};
 
-            // 2. Cek container guess-map potensial dan anak-anaknya
-            const candidates = document.querySelectorAll(
-                'div[data-qa="guess-map"], div[class*="guess-map"], div[class*="styles_map__"], div[class*="map-container"], div.widget-scene-canvas'
-            );
-            for (const c of candidates) {
-                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-                if (fiberKey) {
-                    const map = findMapInFiber(c[fiberKey]);
-                    if (isMapValid(map)) {
-                        foundMap = map;
-                        attachMapListeners();
-                        isScanning = false;
-                        return;
-                    }
-                }
-                const subElements = c.querySelectorAll("*");
-                for (const sub of subElements) {
-                    const subFiber = Object.keys(sub).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-                    if (!subFiber) continue;
-                    const map = findMapInFiber(sub[subFiber]);
-                    if (isMapValid(map)) {
-                        foundMap = map;
-                        attachMapListeners();
-                        isScanning = false;
-                        return;
-                    }
-                }
-            }
-
-            // 3. Fallback: Cari di kontainer umum
-            const containers = document.querySelectorAll("div");
-            const maxCheck = Math.min(containers.length, 120);
-            for (let i = 0; i < maxCheck; i++) {
-                const c = containers[i];
-                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-                if (!fiberKey) continue;
-                const map = findMapInFiber(c[fiberKey]);
-                if (isMapValid(map)) {
-                    foundMap = map;
-                    attachMapListeners();
-                    break;
-                }
-            }
-        } catch (_) {}
-        isScanning = false;
-    }
-
-    // Deteksi otomatis saat layar GeoGuessr menampilkan pesan gagal memuat panorama
-    function checkPanoramaFailure() {
+if (typeof window.fetch === "function" && !window.fetch.__adguards_hooked) {
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+        const response = await originalFetch.apply(this, args);
         try {
-            const text = document.body ? (document.body.innerText || "") : "";
+            const url = typeof args[0] === "string" ? args[0] : (args[0]?.url || "");
             if (
-                text.includes("Failed to load the panorama") ||
-                text.includes("Failed to load panorama") ||
-                text.includes("Could not load panorama") ||
-                text.includes("Unable to load panorama") ||
-                text.includes("Error loading panorama")
+                url.includes("MapsJsInternalService/GetMetadata") ||
+                url.includes("MapsJsInternalService/SingleImageSearch") ||
+                url.includes("/api/v3/games/") ||
+                url.includes("/api/v4/")
             ) {
-                stopCurrentAction();
-                if (!isMapValid(foundMap)) {
-                    foundMap = null;
-                }
+                const clone = response.clone();
+                clone.text().then(text => {
+                    extractCoordsAndHint(text);
+                }).catch(() => {});
             }
         } catch (_) {}
-    }
-
-    // Debounce MutationObserver agar TIDAK membekukan browser saat ronde/panorama gagal dan terjadi banjir mutasi DOM
-    const mapObserver = new MutationObserver(() => {
-        if (!isMapValid(foundMap)) {
-            requestScanForMap(300);
-        }
-    });
-    if (document.body) {
-        mapObserver.observe(document.body, { childList: true, subtree: true });
-    }
-
-    hookGoogleMapConstructor();
-    hookGoogleMapPrototype();
-
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-        scanForMap();
-    } else {
-        window.addEventListener("load", () => scanForMap());
-    }
-
-    // Tampilkan tanda aktif pertama kali script dieksekusi
-    triggerStealthActiveIndicator();
-
-    // Revive handler anti-gagal agar bookmarklet bisa dipanggil kapan saja untuk re-sinkronisasi instan
-    window.__ADGUARDS_REVIVE__ = function() {
-        try {
-            stopCurrentAction();
-            currentRoundCoords = null;
-            foundMap = null; // Paksa deteksi ulang instance map aktif
-            currentAttachedDiv = null;
-            dotAdded = true; // Langsung aktifkan mode titik / kontrol tanpa reload!
-
-            hookGoogleMapConstructor();
-            hookGoogleMapPrototype();
-
-            // Multi-stage scan bertahap untuk menangkap map baru pasca transisi/error
-            scanForMap();
-            setTimeout(scanForMap, 60);
-            setTimeout(scanForMap, 200);
-            setTimeout(scanForMap, 500);
-            setTimeout(scanForMap, 1000);
-
-            syncTermsText();
-            dismissPartyModalIfNeeded();
-            if (typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-            triggerStealthActiveIndicator();
-        } catch (_) {}
+        return response;
     };
+    window.fetch.__adguards_hooked = true;
+}
 
-    // =================== Event Listeners Rebind Management ===================
-        // =================== Event Listeners Rebind Management (PC Only) ===================
-    function attachMapListeners() {
-        if (!isMapValid(foundMap)) return;
-        try {
-            const targetEl = foundMap.getDiv();
-            if (!targetEl) return;
+function isHintChanged(newHint) {
+    if (!newHint || newHint.trim() === "" || newHint.length < 2) return false;
+    const current = location.hash ? location.hash.substring(1) : "";
+    if (!current || current.length < 2) return true;
+    const newCore = newHint.substring(1).toLowerCase();
+    const currentCore = current.substring(1).toLowerCase();
+    return newCore !== currentCore;
+}
 
-            if (targetEl !== currentAttachedDiv) {
-                if (currentAttachedDiv) {
-                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, true);
-                    currentAttachedDiv.removeEventListener("wheel", handleWheelZoom, false);
-                    currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
-                    currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
-                    currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
-                    currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+// =================== Hook Google Maps Constructor & Prototype ===================
+function hookGoogleMapConstructor() {
+    try {
+        if (typeof google !== "undefined" && google.maps && google.maps.Map && !google.maps.Map.__adguards_hooked) {
+            const originalMapCtor = google.maps.Map;
+            google.maps.Map = function (...args) {
+                const instance = new originalMapCtor(...args);
+                try {
+                    setTimeout(() => {
+                        if (isMapValid(instance)) {
+                            foundMap = instance;
+                            attachMapListeners();
+                        }
+                    }, 50);
+                } catch (_) {}
+                return instance;
+            };
+            Object.assign(google.maps.Map, originalMapCtor);
+            google.maps.Map.prototype = originalMapCtor.prototype;
+            google.maps.Map.__adguards_hooked = true;
+        }
+    } catch (_) {}
+}
+
+function hookGoogleMapPrototype() {
+    try {
+        if (typeof google !== "undefined" && google.maps && google.maps.Map && google.maps.Map.prototype) {
+            const proto = google.maps.Map.prototype;
+            if (!proto.__adguards_proto_hooked) {
+                proto.__adguards_proto_hooked = true;
+                const origSetCenter = proto.setCenter;
+                proto.setCenter = function (...args) {
+                    try {
+                        if (isMapValid(this) && foundMap !== this) {
+                            foundMap = this;
+                            attachMapListeners();
+                        }
+                    } catch (_) {}
+                    return origSetCenter.apply(this, args);
+                };
+                const origPanTo = proto.panTo;
+                proto.panTo = function (...args) {
+                    try {
+                        if (isMapValid(this) && foundMap !== this) {
+                            foundMap = this;
+                            attachMapListeners();
+                        }
+                    } catch (_) {}
+                    return origPanTo.apply(this, args);
+                };
+                const origSetZoom = proto.setZoom;
+                proto.setZoom = function (...args) {
+                    try {
+                        if (isMapValid(this) && foundMap !== this) {
+                            foundMap = this;
+                            attachMapListeners();
+                        }
+                    } catch (_) {}
+                    return origSetZoom.apply(this, args);
+                };
+            }
+        }
+    } catch (_) {}
+}
+
+// =================== Map Helpers & Lifecycle Detection ===================
+function isGoogleMap(obj) {
+    try {
+        return !!(obj && typeof obj.getCenter === "function" && typeof obj.setZoom === "function" && typeof obj.getDiv === "function");
+    } catch (_) {
+        return false;
+    }
+}
+
+function isMapValid(map) {
+    if (!isGoogleMap(map)) return false;
+    try {
+        const div = map.getDiv();
+        if (!div || !document.body || !document.body.contains(div) || div.isConnected === false) return false;
+        if (div.offsetWidth === 0 && div.offsetHeight === 0 && div.getClientRects().length === 0) {
+            return false;
+        }
+        const center = map.getCenter();
+        return !!(center && typeof center.lat === "function" && !isNaN(center.lat()));
+    } catch (_) {
+        return false;
+    }
+}
+
+function findMapInFiber(fiber, depth = 0) {
+    if (!fiber || depth > 35) return null;
+    try {
+        const props = fiber.memoizedProps;
+        if (props?.map && isGoogleMap(props.map) && isMapValid(props.map)) return props.map;
+        return findMapInFiber(fiber.child, depth + 1) || findMapInFiber(fiber.sibling, depth + 1);
+    } catch (_) {
+        return null;
+    }
+}
+
+function requestScanForMap(delay = 250) {
+    if (scanTimeout) return;
+    scanTimeout = setTimeout(() => {
+        scanTimeout = null;
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+        }
+    }, delay);
+}
+
+function scanForMap() {
+    if (isMapValid(foundMap)) {
+        attachMapListeners();
+        return;
+    }
+    if (isScanning) return;
+    isScanning = true;
+
+    try {
+        // 1. Cek container guess-map potensial terlebih dahulu (cepat & tidak membebani CPU)
+        const candidates = document.querySelectorAll(
+            'div[data-qa="guess-map"], div[class*="guess-map"], div[class*="styles_map__"], div[class*="map-container"], div.widget-scene-canvas'
+        );
+        for (const c of candidates) {
+            const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
+            if (!fiberKey) continue;
+            const map = findMapInFiber(c[fiberKey]);
+            if (isMapValid(map)) {
+                foundMap = map;
+                attachMapListeners();
+                isScanning = false;
+                return;
+            }
+        }
+
+        // 2. Fallback: Cari di kontainer umum dengan batas agar tidak membekukan tab saat error
+        const containers = document.querySelectorAll("div");
+        const maxCheck = Math.min(containers.length, 120);
+        for (let i = 0; i < maxCheck; i++) {
+            const c = containers[i];
+            const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
+            if (!fiberKey) continue;
+            const map = findMapInFiber(c[fiberKey]);
+            if (isMapValid(map)) {
+                foundMap = map;
+                attachMapListeners();
+                break;
+            }
+        }
+    } catch (_) {}
+    isScanning = false;
+}
+
+// Deteksi otomatis saat layar GeoGuessr menampilkan pesan gagal memuat panorama
+function checkPanoramaFailure() {
+    try {
+        const text = document.body ? (document.body.innerText || "") : "";
+        if (
+            text.includes("Failed to load the panorama") ||
+            text.includes("Failed to load panorama") ||
+            text.includes("Could not load panorama") ||
+            text.includes("Unable to load panorama") ||
+            text.includes("Error loading panorama")
+        ) {
+            stopCurrentAction();
+            if (!isMapValid(foundMap)) {
+                foundMap = null;
+            }
+        }
+    } catch (_) {}
+}
+
+// Debounce MutationObserver agar TIDAK membekukan browser saat ronde/panorama gagal dan terjadi banjir mutasi DOM
+const mapObserver = new MutationObserver(() => {
+    if (!isMapValid(foundMap)) {
+        requestScanForMap(300);
+    }
+});
+if (document.body) {
+    mapObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+hookGoogleMapConstructor();
+hookGoogleMapPrototype();
+
+if (document.readyState === "complete" || document.readyState === "interactive") {
+    scanForMap();
+} else {
+    window.addEventListener("load", () => scanForMap());
+}
+triggerStealthActiveIndicator();
+
+// =================== Event Listeners Rebind Management ===================
+let touchTimer = null;
+let touchStartPos = { x: 0, y: 0 };
+let isTouching = false;
+let lastTouchEndTime = 0;
+
+function handleMapTouchStart(e) {
+    try {
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+            if (!isMapValid(foundMap)) return;
+        }
+        if (!dotAdded) return;
+        if (e.touches && e.touches.length > 1) {
+            if (touchTimer) clearTimeout(touchTimer);
+            return;
+        }
+
+        const touch = e.touches[0];
+        touchStartPos = { x: touch.clientX, y: touch.clientY };
+        isTouching = true;
+
+        const now = Date.now();
+        if (now - lastTouchEndTime < 300) {
+            if (touchTimer) clearTimeout(touchTimer);
+            lastTouchEndTime = 0;
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
+            }
+            return;
+        }
+
+        if (touchTimer) clearTimeout(touchTimer);
+        touchTimer = setTimeout(() => {
+            if (isTouching && dotAdded && globalCoordinates.lat && globalCoordinates.lng) {
+                isRightMouseDown = true;
+                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+            }
+        }, 350);
+    } catch (_) {}
+}
+
+function handleMapTouchMove(e) {
+    try {
+        if (e.touches && e.touches.length > 0) {
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchStartPos.x);
+            const dy = Math.abs(touch.clientY - touchStartPos.y);
+            if (dx > 12 || dy > 12) {
+                if (touchTimer) {
+                    clearTimeout(touchTimer);
+                    touchTimer = null;
                 }
-                currentAttachedDiv = targetEl;
             }
+        }
+    } catch (_) {}
+}
 
-            targetEl.removeEventListener("wheel", handleWheelZoom, true);
-            targetEl.removeEventListener("wheel", handleWheelZoom, false);
-            targetEl.removeEventListener("mousedown", handleMouseDown);
-            targetEl.removeEventListener("mouseup", handleMouseUp);
-            targetEl.removeEventListener("mouseleave", handleMouseLeave);
-            targetEl.removeEventListener("contextmenu", handleContextMenu);
+function handleMapTouchEnd() {
+    try {
+        lastTouchEndTime = Date.now();
+        isTouching = false;
+        if (touchTimer) {
+            clearTimeout(touchTimer);
+            touchTimer = null;
+        }
+        if (isRightMouseDown) {
+            isRightMouseDown = false;
+            clearMarker();
+        }
+    } catch (_) {}
+}
 
-            targetEl.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
-            targetEl.addEventListener("wheel", handleWheelZoom, { capture: false, passive: false });
-            targetEl.addEventListener("mousedown", handleMouseDown);
-            targetEl.addEventListener("mouseup", handleMouseUp);
-            targetEl.addEventListener("mouseleave", handleMouseLeave);
-            targetEl.addEventListener("contextmenu", handleContextMenu);
+function attachMapListeners() {
+    if (!isMapValid(foundMap)) return;
+    try {
+        const targetEl = foundMap.getDiv();
+        if (!targetEl) return;
 
-            if (targetEl.parentElement) {
-                targetEl.parentElement.removeEventListener("wheel", handleWheelZoom, true);
-                targetEl.parentElement.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
+        if (targetEl !== currentAttachedDiv) {
+            if (currentAttachedDiv) {
+                currentAttachedDiv.removeEventListener("wheel", handleWheelZoom);
+                currentAttachedDiv.removeEventListener("mousedown", handleMouseDown);
+                currentAttachedDiv.removeEventListener("mouseup", handleMouseUp);
+                currentAttachedDiv.removeEventListener("mouseleave", handleMouseLeave);
+                currentAttachedDiv.removeEventListener("contextmenu", handleContextMenu);
+                currentAttachedDiv.removeEventListener("touchstart", handleMapTouchStart);
+                currentAttachedDiv.removeEventListener("touchmove", handleMapTouchMove);
+                currentAttachedDiv.removeEventListener("touchend", handleMapTouchEnd);
+                currentAttachedDiv.removeEventListener("touchcancel", handleMapTouchEnd);
             }
-        } catch (_) {}
-    }
-
-    // Global wheel capture for middle-click scroll so no container or canvas can swallow it
-    window.removeEventListener("wheel", handleWheelZoom, true);
-    window.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
-    document.removeEventListener("wheel", handleWheelZoom, true);
-    document.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
-
-    function stopCurrentAction() {
-        if (currentPanAnimId) {
-            cancelAnimationFrame(currentPanAnimId);
-            currentPanAnimId = null;
+            currentAttachedDiv = targetEl;
         }
-        if (currentZoomTimerId) {
-            clearTimeout(currentZoomTimerId);
-            currentZoomTimerId = null;
-        }
-    }
 
-    function getShortestLngDiff(targetLng, currentLng) {
-        let diff = targetLng - currentLng;
-        while (diff > 180) diff -= 360;
-        while (diff < -180) diff += 360;
-        return diff;
-    }
+        targetEl.removeEventListener("wheel", handleWheelZoom);
+        targetEl.removeEventListener("mousedown", handleMouseDown);
+        targetEl.removeEventListener("mouseup", handleMouseUp);
+        targetEl.removeEventListener("mouseleave", handleMouseLeave);
+        targetEl.removeEventListener("contextmenu", handleContextMenu);
+        targetEl.removeEventListener("touchstart", handleMapTouchStart);
+        targetEl.removeEventListener("touchmove", handleMapTouchMove);
+        targetEl.removeEventListener("touchend", handleMapTouchEnd);
+        targetEl.removeEventListener("touchcancel", handleMapTouchEnd);
 
-    function easeOutCubic(t) {
-        return 1 - Math.pow(1 - t, 3);
-    }
+        targetEl.addEventListener("wheel", handleWheelZoom, { passive: false });
+        targetEl.addEventListener("mousedown", handleMouseDown);
+        targetEl.addEventListener("mouseup", handleMouseUp);
+        targetEl.addEventListener("mouseleave", handleMouseLeave);
+        targetEl.addEventListener("contextmenu", handleContextMenu);
 
-    function getPixelToLatLngOffset(pixelX, pixelY, lat, zoom) {
-        const scale = 256 * Math.pow(2, zoom);
-        const dLng = (pixelX / scale) * 360;
-        const latRad = (lat * Math.PI) / 180;
-        const dLat = - (pixelY / scale) * 360 * Math.cos(latRad);
-        return { dLat, dLng };
-    }
+        targetEl.addEventListener("touchstart", handleMapTouchStart, { passive: true });
+        targetEl.addEventListener("touchmove", handleMapTouchMove, { passive: true });
+        targetEl.addEventListener("touchend", handleMapTouchEnd, { passive: true });
+        targetEl.addEventListener("touchcancel", handleMapTouchEnd, { passive: true });
+    } catch (_) {}
+}
 
-    function humanPanAndZoom(map, targetLat, targetLng) {
+// =================== Human-Like Pan & Zoom ===================
+let currentPanAnimId = null;
+let currentZoomTimerId = null;
+
+function stopCurrentAction() {
+    if (currentPanAnimId) {
+        cancelAnimationFrame(currentPanAnimId);
+        currentPanAnimId = null;
+    }
+    if (currentZoomTimerId) {
+        clearTimeout(currentZoomTimerId);
+        currentZoomTimerId = null;
+    }
+}
+
+function getShortestLngDiff(targetLng, currentLng) {
+    let diff = targetLng - currentLng;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    return diff;
+}
+
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+function getPixelToLatLngOffset(pixelX, pixelY, lat, zoom) {
+    const scale = 256 * Math.pow(2, zoom);
+    const dLng = (pixelX / scale) * 360;
+    const latRad = (lat * Math.PI) / 180;
+    const dLat = -(pixelY / scale) * 360 * Math.cos(latRad);
+    return { dLat, dLng };
+}
+
+function humanPanAndZoom(map, targetLat, targetLng) {
+    try {
         if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
 
         stopCurrentAction();
 
-        const center = map.getCenter();
-        if (!center) return;
+        const startCenter = map.getCenter();
+        if (!startCenter || typeof startCenter.lat !== "function") return;
 
-        const startLat = center.lat();
-        const startLng = center.lng();
-        const currentZoom = map.getZoom();
+        const startLat = startCenter.lat();
+        const startLng = startCenter.lng();
+        const startZoom = map.getZoom();
 
-        const dist = getDistanceMeters(startLat, startLng, targetLat, targetLng);
-        let maxZoom = Math.min(17, currentZoom + 2);
-        if (dist > 2000000 && maxZoom < 4) maxZoom = 4;
+        const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
 
-        const signX = Math.random() < 0.5 ? -1 : 1;
-        const signY = Math.random() < 0.5 ? -1 : 1;
-        const offX = signX * (22 + Math.random() * 26);
-        const offY = signY * (18 + Math.random() * 24);
+        let targetZoom = Math.min(17, startZoom + 2);
+        if (distanceMeters > 2000000 && targetZoom < 4) {
+            targetZoom = 4;
+        }
 
-        const latLngOffset = getPixelToLatLngOffset(offX, offY, targetLat, currentZoom);
-        const effectiveTargetLat = targetLat + latLngOffset.dLat;
-        const effectiveTargetLng = targetLng + latLngOffset.dLng;
+        const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
+        const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
 
-        const totalLatDiff = effectiveTargetLat - startLat;
-        const totalLngDiff = getShortestLngDiff(effectiveTargetLng, startLng);
+        const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
+        const panTargetLat = targetLat + panOffset.dLat;
+        const panTargetLng = targetLng + panOffset.dLng;
 
-        const duration = (dist < 50000)
-            ? (380 + Math.floor(Math.random() * 80))
-            : Math.min(1250, Math.max(700, 650 + 85 * Math.log10(dist + 1)));
+        const dLat = panTargetLat - startLat;
+        const dLng = getShortestLngDiff(panTargetLng, startLng);
+
+        const panDuration = distanceMeters < 50000
+            ? 380 + Math.floor(Math.random() * 80)
+            : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
 
         const startTime = performance.now();
-        const curveDir = Math.random() < 0.5 ? -1 : 1;
-        const curveStrength = 0.025 + Math.random() * 0.035;
-        const perpLat = -totalLngDiff * curveStrength * curveDir;
-        const perpLng = totalLatDiff * curveStrength * curveDir;
 
-        function animatePan(currentTime) {
-            if (!isMapValid(map)) {
-                stopCurrentAction();
-                return;
-            }
+        const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
+        const perpLat = -dLng * arcMultiplier;
+        const perpLng = dLat * arcMultiplier;
 
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(1, elapsed / duration);
-            const ease = easeOutCubic(progress);
-            const arc = Math.sin(Math.PI * progress);
-
-            const curLat = startLat + totalLatDiff * ease + perpLat * arc;
-            const curLng = startLng + totalLngDiff * ease + perpLng * arc;
-
-            if (typeof google !== "undefined" && google.maps) {
-                map.setCenter(new google.maps.LatLng(curLat, curLng));
-            }
-
-            if (progress < 1) {
-                currentPanAnimId = requestAnimationFrame(animatePan);
-            } else {
-                if (typeof google !== "undefined" && google.maps) {
-                    map.setCenter(new google.maps.LatLng(effectiveTargetLat, effectiveTargetLng));
+        function panFrame(now) {
+            try {
+                if (!isMapValid(map)) {
+                    stopCurrentAction();
+                    return;
                 }
-                currentPanAnimId = null;
 
-                const pauseBeforeZoom = 350 + Math.floor(Math.random() * 100);
-                currentZoomTimerId = setTimeout(() => {
-                    stepZoomPerlahan(map, targetLat, targetLng, maxZoom, offX, offY);
-                }, pauseBeforeZoom);
+                const elapsed = now - startTime;
+                const rawT = Math.min(1, elapsed / panDuration);
+                const t = easeOutCubic(rawT);
+
+                const arc = Math.sin(Math.PI * rawT);
+                const currentL = startLat + dLat * t + perpLat * arc;
+                const currentG = startLng + dLng * t + perpLng * arc;
+
+                if (typeof google !== "undefined" && google.maps) {
+                    map.setCenter(new google.maps.LatLng(currentL, currentG));
+                }
+
+                if (rawT < 1) {
+                    currentPanAnimId = requestAnimationFrame(panFrame);
+                } else {
+                    if (typeof google !== "undefined" && google.maps) {
+                        map.setCenter(new google.maps.LatLng(panTargetLat, panTargetLng));
+                    }
+                    currentPanAnimId = null;
+
+                    const humanViewPause = 350 + Math.floor(Math.random() * 100);
+                    currentZoomTimerId = setTimeout(() => {
+                        stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
+                    }, humanViewPause);
+                }
+            } catch (_) {
+                stopCurrentAction();
             }
         }
 
-        currentPanAnimId = requestAnimationFrame(animatePan);
+        currentPanAnimId = requestAnimationFrame(panFrame);
+    } catch (_) {
+        stopCurrentAction();
     }
+}
 
-    function stepZoomPerlahan(map, targetLat, targetLng, maxZoom, offX, offY) {
+function stepZoomPerlahan(map, targetLat, targetLng, targetZoom, offsetX, offsetY) {
+    try {
         if (!isMapValid(map)) {
             stopCurrentAction();
             return;
         }
 
-        const z = map.getZoom();
-        if (z < maxZoom) {
-            const nextZoom = z + 1;
-            const jitterX = offX + (Math.random() - 0.5) * 12;
-            const jitterY = offY + (Math.random() - 0.5) * 12;
-            const offset = getPixelToLatLngOffset(jitterX, jitterY, targetLat, nextZoom);
+        const currentZ = map.getZoom();
+        if (currentZ < targetZoom) {
+            const nextZ = currentZ + 1;
+            const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
+            const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
+            const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
 
-            map.setZoom(nextZoom);
+            map.setZoom(nextZ);
             if (typeof google !== "undefined" && google.maps) {
-                map.setCenter(new google.maps.LatLng(targetLat + offset.dLat, targetLng + offset.dLng));
+                map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
             }
 
-            const nextDelay = 340 + Math.floor(Math.random() * 90);
+            const scrollDelay = 340 + Math.floor(Math.random() * 90);
             currentZoomTimerId = setTimeout(() => {
-                stepZoomPerlahan(map, targetLat, targetLng, maxZoom, jitterX, jitterY);
-            }, nextDelay);
+                stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
+            }, scrollDelay);
         } else {
             stopCurrentAction();
         }
+    } catch (_) {
+        stopCurrentAction();
     }
+}
 
-    // =================== Wheel Zoom Handler ===================
-    function handleWheelZoom(e) {
-        try {
-            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4) || isMiddleMouseDown;
-            if (!isMiddleHeld) return;
-
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-            }
-            if (!isMapValid(foundMap)) return;
-
-            const lat = Number(globalCoordinates.lat);
-            const lng = Number(globalCoordinates.lng);
-
-            if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
-                stopCurrentAction();
-                const delta = e.deltaY < 0 ? 1 : -1;
-                const currentZoom = (typeof foundMap.getZoom === "function") ? foundMap.getZoom() : 3;
-                const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
-                if (typeof foundMap.setZoom === "function") foundMap.setZoom(newZoom);
-                if (typeof google !== "undefined" && google.maps && google.maps.LatLng) {
-                    foundMap.panTo(new google.maps.LatLng(lat, lng));
-                } else if (typeof foundMap.panTo === "function") {
-                    foundMap.panTo({ lat: lat, lng: lng });
-                }
-            }
-        } catch (_) {}
-    }
-
-    // =================== Mouse Click Handlers ===================
-    function handleMouseDown(e) {
-        try {
-            if (e.button === 1) {
-                // Prevent Chrome middle-click autoscroll cursor and record middle button pressed
-                isMiddleMouseDown = true;
-                e.preventDefault();
-                return;
-            }
-
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-                if (!isMapValid(foundMap)) return;
-            }
-
-            if (e.button === 2 && dotAdded) {
-                e.preventDefault();
-                e.stopPropagation();
-                isRightMouseDown = true;
-                if (globalCoordinates.lat && globalCoordinates.lng) {
-                    showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
-                }
-            }
-        } catch (_) {}
-    }
-
-    function handleMouseUp(e) {
-        try {
-            if (e.button === 1) {
-                isMiddleMouseDown = false;
-            }
-            if (e.button === 2) {
-                isRightMouseDown = false;
-                clearMarker();
-            }
-        } catch (_) {}
-    }
-
-    function handleMouseLeave() {
-        try {
-            if (isRightMouseDown) {
-                isRightMouseDown = false;
-                clearMarker();
-            }
-        } catch (_) {}
-    }
-
-    function handleContextMenu(e) {
-        if (dotAdded) {
+// =================== Wheel Zoom Handler ===================
+function handleWheelZoom(e) {
+    try {
+        if (!isMapValid(foundMap) || !dotAdded) return;
+        if (e.buttons === 4 && globalCoordinates.lat && globalCoordinates.lng) {
             e.preventDefault();
+            e.stopPropagation();
+            stopCurrentAction();
+            const delta = e.deltaY < 0 ? 1 : -1;
+            const currentZoom = foundMap.getZoom();
+            const newZoom = Math.max(1, Math.min(21, currentZoom + delta));
+            foundMap.setZoom(newZoom);
+            if (typeof google !== "undefined" && google.maps) {
+                foundMap.panTo(new google.maps.LatLng(globalCoordinates.lat, globalCoordinates.lng));
+            }
         }
-    }
+    } catch (_) {}
+}
 
-    // =================== Marker Management ===================
-    function showMarkerAt(lat, lng, force = false) {
-        try {
-            if (!isMapValid(foundMap)) {
-                scanForMap();
-                if (!isMapValid(foundMap)) return;
+// =================== Mouse Click Handlers ===================
+function handleMouseDown(e) {
+    try {
+        if (!isMapValid(foundMap)) {
+            scanForMap();
+            if (!isMapValid(foundMap)) return;
+        }
+
+        if (e.button === 1 && dotAdded) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
             }
-            if (!lat || !lng) return;
+            return;
+        }
 
+        if (e.button === 2 && dotAdded) {
+            e.preventDefault();
+            e.stopPropagation();
+            isRightMouseDown = true;
+            if (globalCoordinates.lat && globalCoordinates.lng) {
+                showMarkerAt(globalCoordinates.lat, globalCoordinates.lng);
+            }
+        }
+    } catch (_) {}
+}
+
+function handleMouseUp(e) {
+    try {
+        if (e.button === 2) {
+            isRightMouseDown = false;
             clearMarker();
-            if (!isRightMouseDown && !force) return;
+        }
+    } catch (_) {}
+}
 
-            if (typeof google !== "undefined" && google.maps && google.maps.Marker) {
-                currentMarker = new google.maps.Marker({
-                    position: { lat, lng },
-                    map: foundMap,
-                    zIndex: 9999999,
-                    clickable: false,
-                    optimized: false,
-                    icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 2,
-                        fillColor: "#0088ff",
-                        fillOpacity: 1.0,
-                        strokeColor: "#ffffff",
-                        strokeWeight: 1,
-                    }
-                });
-                return;
-            }
+function handleMouseLeave() {
+    try {
+        if (isRightMouseDown) {
+            isRightMouseDown = false;
+            clearMarker();
+        }
+    } catch (_) {}
+}
 
-            if (typeof google !== "undefined" && google.maps && google.maps.marker && google.maps.marker.AdvancedMarkerElement) {
-                const pinElement = document.createElement("div");
-                pinElement.style.width = "4px";
-                pinElement.style.height = "4px";
-                pinElement.style.borderRadius = "50%";
-                pinElement.style.background = "#0088ff";
-                pinElement.style.border = "1px solid #ffffff";
-                pinElement.style.boxShadow = "0 0 3px #0088ff";
-                pinElement.style.transform = "translate(-50%, -50%)";
-                pinElement.style.pointerEvents = "none";
-                pinElement.style.zIndex = "9999999";
-
-                currentMarker = new google.maps.marker.AdvancedMarkerElement({
-                    map: foundMap,
-                    position: { lat, lng },
-                    content: pinElement,
-                    zIndex: 9999999,
-                });
-            }
-        } catch (_) {}
+function handleContextMenu(e) {
+    if (dotAdded) {
+        e.preventDefault();
     }
+}
 
-    function clearMarker() {
-        try {
-            if (currentMarker) {
-                if (typeof currentMarker.setMap === "function") {
-                    currentMarker.setMap(null);
+// =================== Marker Management ===================
+function showMarkerAt(lat, lng) {
+    try {
+        if (!isMapValid(foundMap) || !lat || !lng) return;
+
+        clearMarker();
+        if (!isRightMouseDown) return;
+
+        if (typeof google !== "undefined" && google.maps && google.maps.Marker) {
+            currentMarker = new google.maps.Marker({
+                position: { lat, lng },
+                map: foundMap,
+                zIndex: 9999999,
+                clickable: false,
+                optimized: false,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 2,
+                    fillColor: "#0088ff",
+                    fillOpacity: 1.0,
+                    strokeColor: "#ffffff",
+                    strokeWeight: 1,
                 }
-                currentMarker.map = null;
-                currentMarker = null;
+            });
+            return;
+        }
+
+        if (typeof google !== "undefined" && google.maps?.marker?.AdvancedMarkerElement) {
+            const pinElement = document.createElement("div");
+            pinElement.style.width = "4px";
+            pinElement.style.height = "4px";
+            pinElement.style.borderRadius = "50%";
+            pinElement.style.background = "#0088ff";
+            pinElement.style.border = "1px solid #ffffff";
+            pinElement.style.boxShadow = "0 0 3px #0088ff";
+            pinElement.style.transform = "translate(-50%, -50%)";
+            pinElement.style.pointerEvents = "none";
+            pinElement.style.zIndex = "9999999";
+
+            currentMarker = new google.maps.marker.AdvancedMarkerElement({
+                map: foundMap,
+                position: { lat, lng },
+                content: pinElement,
+                zIndex: 9999999,
+            });
+        }
+    } catch (_) {}
+}
+
+function clearMarker() {
+    try {
+        if (currentMarker) {
+            if (typeof currentMarker.setMap === "function") {
+                currentMarker.setMap(null);
             }
-        } catch (_) {
+            currentMarker.map = null;
             currentMarker = null;
         }
+    } catch (_) {
+        currentMarker = null;
     }
+}
 
-    function shiftAfterComma(input = "") {
-        try {
-            const parts = input.split(",");
-            const text = parts.length > 1 ? parts.slice(1).join(",").trim() : input;
+function shiftAfterComma(input = "") {
+    try {
+        const parts = input.split(",");
+        const text = parts.length > 1 ? parts.slice(1).join(",").trim() : input;
 
-            const isUpper = Math.random() < 0.5;
-            const charCode = 97 + Math.floor(Math.random() * 26);
-            const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
+        const isUpper = Math.random() < 0.5;
+        const charCode = 97 + Math.floor(Math.random() * 26);
+        const marker = String.fromCharCode(isUpper ? charCode - 32 : charCode);
 
-            const result = text.split("").map(ch => {
-                if (ch === " ") return "-";
-                if (/[a-zA-Z]/.test(ch)) {
-                    const base = ch === ch.toUpperCase() ? 65 : 97;
-                    const code = ch.charCodeAt(0) - base;
-                    const newCode = (code - 1 + 26) % 26;
-                    return String.fromCharCode(base + newCode);
-                }
-                return ch;
-            }).join("");
-
-            return marker + result;
-        } catch (_) {
-            return "";
-        }
-    }
-
-    // =================== Terms Interceptor ===================
-    function isTermsElement(target) {
-        if (!target) return false;
-        try {
-            const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
-            if (!a) return false;
-            const text = (a.textContent || "").trim();
-            const href = (a.getAttribute("href") || "").toLowerCase();
-            return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
-        } catch (_) {
-            return false;
-        }
-    }
-
-    function syncTermsText() {
-        try {
-            const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
-            links.forEach(link => {
-                try {
-                    if (link.hasAttribute("href")) {
-                        link.removeAttribute("href");
-                    }
-                    link.removeAttribute("target");
-                    link.removeAttribute("rel");
-                    link.style.cursor = "pointer";
-                    link.style.userSelect = "none";
-                    link.style.webkitUserSelect = "none";
-                    const desired = dotAdded ? "Map Terms" : "Terms";
-                    if (link.textContent !== desired) {
-                        link.textContent = desired;
-                    }
-
-                    if (!link.__adguards_bound) {
-                        link.__adguards_bound = true;
-                        const toggleHandler = function(e) {
-                            if (e) {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                e.stopImmediatePropagation();
-                            }
-                            dotAdded = !dotAdded;
-                            syncTermsText();
-                            if (!dotAdded) {
-                                isRightMouseDown = false;
-                                clearMarker();
-                            }
-                            return false;
-                        };
-                        link.addEventListener("click", toggleHandler, true);
-                        link.onclick = toggleHandler;
-                    }
-                } catch (_) {}
-            });
-        } catch (_) {}
-    }
-
-    function handleTermsTrigger(e) {
-        try {
-            if (isTermsElement(e.target)) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-
-                dotAdded = !dotAdded;
-                syncTermsText();
-
-                if (!dotAdded) {
-                    isRightMouseDown = false;
-                    clearMarker();
-                }
-                return false;
+        const result = text.split("").map(ch => {
+            if (ch === " ") return "-";
+            if (/[a-zA-Z]/.test(ch)) {
+                const base = ch === ch.toUpperCase() ? 65 : 97;
+                const code = ch.charCodeAt(0) - base;
+                const newCode = (code - 1 + 26) % 26;
+                return String.fromCharCode(base + newCode);
             }
-        } catch (_) {}
-    }
+            return ch;
+        }).join("");
 
-    window.addEventListener("click", handleTermsTrigger, true);
-    document.addEventListener("click", handleTermsTrigger, true);
-    // =================== Translation Cache & Resolver (GeoGuessr i18n) ===================
-    const translationCache = {};
-
-    function formatFallbackClueKey(key) {
-        if (!key || typeof key !== "string") return "";
-        if (!key.startsWith("clue.")) return key;
-        let clean = key.replace(/^clue\./, "");
-        clean = clean.replace(/-(title|description)$/, "");
-        clean = clean.replace(/^[a-z]{2}-/, "");
-        clean = clean.replace(/[-_]/g, " ");
-        clean = clean.replace(/\b\w/g, c => c.toUpperCase());
-        return clean.trim();
-    }
-
-    function resolveTranslation(key) {
-        if (!key || typeof key !== "string") return Promise.resolve("");
-        if (!key.startsWith("clue.")) return Promise.resolve(key);
-        if (translationCache[key]) return Promise.resolve(translationCache[key]);
-
-        return fetch("/api/v3/translations/key/" + encodeURIComponent(key), { credentials: "omit" })
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data && Array.isArray(data.phrases) && data.phrases.length > 0) {
-                    const en = data.phrases.find(p => p.language === "en" || p.locale === "en_US") || data.phrases[0];
-                    if (en && en.phrase) {
-                        translationCache[key] = en.phrase;
-                        return en.phrase;
-                    }
-                }
-                const fallback = formatFallbackClueKey(key);
-                translationCache[key] = fallback;
-                return fallback;
-            })
-            .catch(() => {
-                const fallback = formatFallbackClueKey(key);
-                translationCache[key] = fallback;
-                return fallback;
-            });
-    }
-
-    function getClueText(key, defaultText) {
-        if (!key) return defaultText || "";
-        if (!key.startsWith("clue.")) return key;
-        if (translationCache[key]) return translationCache[key];
-        resolveTranslation(key).then(() => {
-            if (plonkitActive && typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-        });
-        return formatFallbackClueKey(key);
-    }
-
-    function fetchZoomedImage(pano, clue) {
-        if (!pano || !clue) return Promise.resolve(null);
-        if (clue.image && (clue.image.startsWith("http") || clue.image.startsWith("data:"))) {
-            return Promise.resolve(clue.image);
-        }
-        let query = "";
-        if (typeof clue.heading === "number") {
-            query = "heading=" + encodeURIComponent(clue.heading) +
-                    "&pitch=" + encodeURIComponent(clue.pitch || 0) +
-                    "&fov=" + encodeURIComponent(clue.fov || 60);
-        } else if (clue.cell) {
-            query = "cell=" + encodeURIComponent(clue.cell);
-        } else {
-            return Promise.resolve(null);
-        }
-
-        return fetch("/api/v4/game-analysis/zoomed-image/" + encodeURIComponent(pano) + "?" + query, { credentials: "include" })
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                const img = (data && data.payload && data.payload.image) || (data && data.image) || null;
-                if (img) {
-                    clue.image = img;
-                }
-                return img;
-            })
-            .catch(() => null);
-    }
-
-    // =================== Official GeoGuessr Clues Engine (Iris AI) ===================
-    function triggerCluesFetch() {
-        const cc = (globalPlace.countryCode || "").toLowerCase();
-        const pano = currentPanoId || "";
-        if (!cc && !pano) return;
-
-        const cacheKey = `${cc}_${pano}`;
-        if (cachedGeoGuessrClues.key === cacheKey && (cachedGeoGuessrClues.countryClues.length > 0 || cachedGeoGuessrClues.panoClues.length > 0)) {
-            return;
-        }
-
-        cachedGeoGuessrClues.key = cacheKey;
-        cachedGeoGuessrClues.countryCode = cc;
-        cachedGeoGuessrClues.panoId = pano;
-        cachedGeoGuessrClues.loading = true;
-        cachedGeoGuessrClues.countryClues = [];
-        cachedGeoGuessrClues.panoClues = [];
-        cachedGeoGuessrClues.error = null;
-
-        if (plonkitActive && typeof updatePlonkitUI === "function") {
-            updatePlonkitUI();
-        }
-
-        const tasks = [];
-        if (cc) {
-            tasks.push(
-                fetch("/api/v4/clues/country/" + encodeURIComponent(cc) + "?count=8", { credentials: "include" })
-                    .then(res => res.ok ? res.json() : null)
-                    .then(data => {
-                        let list = [];
-                        if (Array.isArray(data)) {
-                            list = data;
-                        } else if (data && Array.isArray(data.clues)) {
-                            list = data.clues;
-                        }
-                        cachedGeoGuessrClues.countryClues = list;
-                        list.forEach(item => {
-                            if (item.title && item.title.startsWith("clue.")) resolveTranslation(item.title);
-                            if (item.description && item.description.startsWith("clue.")) resolveTranslation(item.description);
-                        });
-                    })
-                    .catch(() => {})
-            );
-        }
-
-        if (pano) {
-            tasks.push(
-                fetch("/api/v4/clues/" + encodeURIComponent(pano), { credentials: "include" })
-                    .then(res => res.ok ? res.json() : null)
-                    .then(async data => {
-                        let list = [];
-                        if (Array.isArray(data)) {
-                            list = data;
-                        } else if (data && Array.isArray(data.clues)) {
-                            list = data.clues;
-                        }
-
-                        if (list.length === 0) {
-                            try {
-                                const scoutRes = await fetch("/api/v4/game-analysis/scout-clues/" + encodeURIComponent(pano), { credentials: "include" });
-                                if (scoutRes.ok) {
-                                    const scoutData = await scoutRes.json();
-                                    const payload = (scoutData && scoutData.payload) || scoutData;
-                                    if (Array.isArray(payload)) list = payload;
-                                    else if (payload && Array.isArray(payload.clues)) list = payload.clues;
-                                }
-                            } catch (_) {}
-                        }
-
-                        cachedGeoGuessrClues.panoClues = list;
-
-                        const subTasks = [];
-                        list.forEach(item => {
-                            if (item.title && item.title.startsWith("clue.")) {
-                                subTasks.push(resolveTranslation(item.title));
-                            }
-                            if (item.description && item.description.startsWith("clue.")) {
-                                subTasks.push(resolveTranslation(item.description));
-                            }
-                            if (!item.image && (typeof item.heading === "number" || item.cell)) {
-                                subTasks.push(fetchZoomedImage(pano, item));
-                            }
-                        });
-                        if (subTasks.length > 0) {
-                            await Promise.all(subTasks);
-                        }
-                    })
-                    .catch(() => {})
-            );
-        }
-
-        Promise.all(tasks).finally(() => {
-            cachedGeoGuessrClues.loading = false;
-            if (plonkitActive && typeof updatePlonkitUI === "function") {
-                updatePlonkitUI();
-            }
-        });
-    }
-
-    function escapeHtml(str) {
-        if (!str) return "";
-        return String(str)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
-
-    function getCountrySlug(countryName, countryCode) {
-        if (!countryName && !countryCode) return "";
-        const code = (countryCode || "").toUpperCase();
-        const codeMap = {
-            "US": "united-states", "GB": "united-kingdom", "UK": "united-kingdom",
-            "KR": "south-korea", "CZ": "czechia", "RU": "russia", "AE": "united-arab-emirates",
-            "DO": "dominican-republic", "NZ": "new-zealand", "ZA": "south-africa", "SZ": "eswatini",
-            "MK": "north-macedonia", "CW": "curacao", "LA": "laos", "KG": "kyrgyzstan",
-            "TW": "taiwan", "HK": "hong-kong", "SG": "singapore", "MY": "malaysia",
-            "ID": "indonesia", "TH": "thailand", "PH": "philippines", "VN": "vietnam",
-            "KH": "cambodia", "BD": "bangladesh", "LK": "sri-lanka", "BT": "bhutan",
-            "MN": "mongolia", "JP": "japan", "AU": "australia", "BR": "brazil",
-            "MX": "mexico", "CO": "colombia", "AR": "argentina", "CL": "chile",
-            "PE": "peru", "EC": "ecuador", "BO": "bolivia", "UY": "uruguay",
-            "DK": "denmark", "SE": "sweden", "NO": "norway", "FI": "finland",
-            "IS": "iceland", "EE": "estonia", "LV": "latvia", "LT": "lithuania",
-            "PL": "poland", "DE": "germany", "NL": "netherlands", "BE": "belgium",
-            "FR": "france", "ES": "spain", "PT": "portugal", "IT": "italy",
-            "CH": "switzerland", "AT": "austria", "IE": "ireland", "GR": "greece",
-            "TR": "turkey", "RO": "romania", "BG": "bulgaria", "HU": "hungary",
-            "SK": "slovakia", "SI": "slovenia", "HR": "croatia", "RS": "serbia",
-            "ME": "montenegro", "AL": "albania", "UA": "ukraine", "IL": "israel",
-            "JO": "jordan", "QA": "qatar", "TN": "tunisia", "KE": "kenya",
-            "UG": "uganda", "GH": "ghana", "NG": "nigeria", "SN": "senegal",
-            "BW": "botswana", "LS": "lesotho", "MD": "moldova", "AD": "andorra",
-            "SM": "san-marino", "MT": "malta", "LU": "luxembourg", "FO": "faroe-islands",
-            "GL": "greenland", "GU": "guam", "MP": "northern-mariana-islands",
-            "AS": "american-samoa", "PR": "puerto-rico", "VI": "us-virgin-islands", "BM": "bermuda"
-        };
-        if (code && codeMap[code]) {
-            return codeMap[code];
-        }
-        return (countryName || "")
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "");
-    }
-
-    // =================== Geomastr Official Country Database ===================
-    const GEOMASTR_DATA = {"albania":{"c":"Europe","dr":"Right","l":"Albanian","cr":"Albanian Lek - Lek","dm":".al","ph":"+355","ab":"albanian.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Rruga","Sheshi","Bulevardi"],"bc":1,"pc":2,"po":1,"fs":["Kastrati.png","Alpet.png","Elda.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"american-samoa":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".as","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Avenue","Drive"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"andorra":{"c":"Europe","dr":"Right","l":"Catalan","cr":"Euro - €","dm":".ad","ph":"+376","ab":"latin.png","rl":"White Outside - White Inside","sx":["Carrer","Avinguda","Plaça","Passatge","Ronda","Camí"],"bc":2,"pc":3,"po":2,"fs":["Total.png","Esso.png","Repsol.png","Cepsa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"argentina":{"c":"South America","dr":"Right","l":"Spanish","cr":"Argentine Peso - $","dm":".ar","ph":"+54","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":2,"po":1,"fs":["Puma.png","Esso.png","YPF.png","AxionEnergy.png","Refinor.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"australia":{"c":"Oceania","dr":"Left","l":"English","cr":"Australian Dollar - AU$","dm":".au","ph":"+61","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Parade","Boulevard","Circuit","Terrace"],"bc":6,"pc":6,"po":1,"fs":["Puma.png","Caltex.png","ColesExpress.png","WoolworthsPetrol.png","UnitedPetroleum.png","LibertyOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"austria":{"c":"Europe","dr":"Right","l":"German","cr":"Euro - €","dm":".at","ph":"+43","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straße","Gasse","Platz","Allee","Ring","Weg","Hauptplatz","Promenade"],"bc":6,"pc":2,"po":1,"fs":["Esso.png","OMV.png","Jet.png","Eni.png","Avia.png","Agip.png","Hofer.png","AS24.png","Socar.png","Genol.png","Diskont.png","Avanti.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bangladesh":{"c":"Asia","dr":"Left","l":"Bengali","cr":"Bangladeshi Taka - ৳","dm":".bd","ph":"+880","ab":"bengali.png","rl":"White Outside - White Inside","sx":["Road","Lane","Avenue","Bazar","Sarani","Para","Rasta","Block","Mahalla"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"belgium":{"c":"Europe","dr":"Right","cr":"Euro - €","dm":".be","ph":"+32","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Laan","Weg","Plein","Dreef","Steeg","Hof","Kaai","Park"],"bc":3,"pc":2,"po":1,"fs":["Total.png","Esso.png","Lukoil.png","Texaco.png","Q8.png","Avia.png","AS24.png","BP.png","Power.png","Gabriels.png","MAES.png","OCTA+.png","Dats24.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bermuda":{"c":"North America","dr":"Left","l":"English","cr":"Bermudian dollar (BMD) - $","dm":".bm","ab":"latin.png","rl":"White Outside - White Inside","sx":["Lane","Avenue","Road","Circle","Court"],"bc":1,"pc":2,"po":1,"fs":["Esso.png","Rubis.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bhutan":{"c":"Asia","dr":"Left","l":"Dzongkha","cr":"Bhutanese Ngultrum - Nu.","dm":".bt","ph":"+975","ab":"tibetan.png","rl":"White Outside - White Inside","sx":["Theg","Zam","Street","Chhewog","Toe","Row","Village","Lane","Bridge"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bolivia":{"c":"South America","dr":"Right","cr":"Boliviano - Bs.","dm":".bo","ph":"+591","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Paseo","Carretera","Plaza","Jirón","Cuesta"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"botswana":{"c":"Africa","dr":"Left","cr":"Botswana Pula - P","dm":".bw","ph":"+267","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Close","Drive","Court","Circle"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Puma.png","Caltex.png","Engen.png","Galp.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"brazil":{"c":"South America","dr":"Right","l":"Portuguese","cr":"Brazilian Real - R$","dm":".br","ph":"+55","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Rua","Avenida","Estrada","Travessa","Alameda","Rodovia","Quadra","Praça","Largo","Passarela"],"bc":2,"pc":2,"po":1,"fs":["Esso.png","Ipiranga.png","Ale.png","BRDistribuidora.png","Raizen.png","Ultragaz.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"bulgaria":{"c":"Europe","dr":"Right","l":"Bulgarian","cr":"Bulgarian lev - лв","dm":".bg","ph":"+359","ab":"bulgarian.png","rl":"White Outside - White Inside","sx":["улица","площад","булевард","квартал","парк","тракт","път","мост","алея","бул"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","OMV.png","EKO.png","Avia.png","Rompetrol.png","NIS.png","Astra.png","InsaOil.png","NaftexPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"cambodia":{"c":"Asia","dr":"Right","l":"Khmer","cr":"Cambodian Riel - ៛","dm":".kh","ph":"+855","ab":"khmer.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Sangkat","Phum","Thnou","Sang"],"bc":2,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"canada":{"c":"North America","dr":"Right","cr":"Canadian Dollar - C$","dm":".ca","ph":"+1","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":5,"pc":11,"po":1,"fs":["Esso.png","Irving.png","Petro-Canada.png","HuskyEnergy.png","Sunoco.png","Ultramar.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"chile":{"c":"South America","dr":"Right","l":"Spanish","cr":"Chilean Peso - $","dm":".cl","ph":"+56","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":2,"pc":3,"po":1,"fs":["Terpel.png","COPEC.png","Petrobras.png","ENEX.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"christmas-island":{"c":"Asia","dr":"Left","l":"English","cr":"Australian Dollar - $","dm":".cx","ph":"+61","ab":"latin.png","rl":"White Outside - White Inside","sx":["Road","Avenue","Drive","Way","Circuit","Terrace","Boulevard","Close","Parade","Lane"],"bc":1,"pc":3,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"colombia":{"c":"South America","dr":"Right","l":"Spanish","cr":"Colombian Peso - $","dm":".co","ph":"+57","ab":"latin.png","rl":"White Outside - Yellow Inside / Yellow Outside - White Inside","sx":["Calle","Avenida","Carrera","Transversal","Diagonal","Peatonal","Vía","Autopista","Circunvalar","Cruce"],"bc":1,"pc":3,"po":1,"fs":["Puma.png","Esso.png","Texaco.png","Petrobras.png","Terpel.png","EcoPetrol.png","Biomax.png","BP.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"croatia":{"c":"Europe","dr":"Right","l":"Croatian","cr":"Kuna - kn","dm":".hr","ph":"+385","ab":"croatian.png","rl":"White Outside - White Inside / Red Outside - White Inside","sx":["Ulica","Trg","Avenija","Put","Cesta","Naselje","Skalini","Riva","Traversa","Promenada"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","OMV.png","INA.png","Firezone.png","Argos.png","Tifon.png","Crodux.png","Petrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"curacao":{"c":"North America","dr":"Right","cr":"Netherlands Antillean Guilder - ƒ","dm":".cw","ph":"+599","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Weg","Weggetje","Boulevard","Laan","Plein","Dreef","Kade","Steeg"],"bc":1,"pc":4,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"czech-republic":{"c":"Europe","dr":"Right","l":"Czech","cr":"Czech koruna - Kč","dm":".cz","ph":"+420","ab":"czech.png","rl":"White Outside - White Inside","sx":["Ulice","Náměstí","Třída","Sady","Alej","Nábřeží","Park","Rybník","Cesta","Most"],"bc":1,"pc":4,"po":1,"fs":["Texaco.png","OMV.png","MOL.png","Avia.png","Agip.png","Tesco.png","Benzina.png","Elda.png","PapOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"denmark":{"c":"Europe","dr":"Right","l":"Danish","cr":"Danish krone - kr","dm":".dk","ph":"+45","ab":"dano-norwegian.png","rl":"White Outside - White Inside","sx":["Vej","Gade","Plads","Torv","Allé","Stien","Stræde","Mark","Bakke","Holme"],"bc":3,"pc":5,"po":2,"fs":["Q8.png","Ingo.png","Uno-X.png","OK.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"dominican-republic":{"c":"North America","dr":"Right","l":"Spanish","cr":"Dominican Peso - RD$","dm":".do","ph":"+809","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Carretera","Callejón","Pasaje","Bulevar","Carretera","Cruce","Paraje","Sector"],"bc":1,"pc":2,"po":1,"fs":["Total.png","Esso.png","Texaco.png","Isla.png","Sunix.png","CoastalPetroleumDominicana.png","Propagas.png","Anadegas.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ecuador":{"c":"South America","dr":"Right","l":"Spanish","cr":"United States Dollar - $","dm":".ec","ph":"+593","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":2,"pc":5,"po":1,"fs":["Puma.png","Terpel.png","Petroecuador.png","Petromas.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"estonia":{"c":"Europe","dr":"Right","l":"Estonian","cr":"Euro - €","dm":".ee","ph":"+372","ab":"estonian.png","rl":"White Outside - White Inside","sx":["Tänav","Tee","Puiestee","Tänav","Tänav","Maantee","Tänav","Puiestee","Tänav"],"bc":1,"pc":3,"po":1,"fs":["Neste.png","Alexela.png","Olerex.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"eswatini":{"c":"Africa","dr":"Left","cr":"Swazi Lilangeni -  L","dm":".sz","ph":"+268","ab":"latin.png","rl":"Yellow Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Total.png","Puma.png","Caltex.png","Engen.png","Excel.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"faroe-islands":{"c":"Europe","dr":"Right","cr":"Faroese Krona - kr","dm":".fo","ph":"+298","ab":"latin.png","rl":"White Outside - White Inside","sx":["Gøta","Vegur","Stígur","Gøta","Vegur","Gøta","Vegur","Stígur","Gøta"],"bc":1,"pc":1,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"finland":{"c":"Europe","dr":"Right","l":"Finnish","cr":"Euro - €","dm":".fi","ph":"+358","ab":"finnish.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Katu","Tie","Kuja","Rinne","Polku","Aukio","Tori","Piha","Silta","Rinne"],"bc":1,"pc":3,"po":2,"fs":["Neste.png","Teboil.png","Tango.png","ABC.png","Seo.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"france":{"c":"Europe","dr":"Right","l":"French","cr":"Euro - €","dm":".fr","ph":"+33","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Impasse","Chemin","Place","Route","Cours","Quai","Passage"],"bc":2,"pc":5,"po":1,"fs":["Total.png","Esso.png","Q8.png","Eni.png","Avia.png","Tamoil.png","Rompetrol.png","Carrefour.png","AS24.png","E.Leclerc.png","Intermarche.png","SuperU.png","E.Leclerc.png","Auchan.png","Casino.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"germany":{"c":"Europe","dr":"Right","l":"German","cr":"Euro - €","dm":".de","ph":"+49","ab":"latin.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Straße","Weg","Platz","Allee","Ring","Gasse","Promenade","Hauptstraße","Pfad","An der"],"bc":1,"pc":4,"po":1,"fs":["Total.png","Esso.png","OMV.png","Aral.png","Avia.png","Orlen.png","Agip.png","Elan.png","Jet.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ghana":{"c":"Africa","dr":"Right","l":"English","cr":"Ghanaian cedi - GH₵","dm":".gh","ph":"+233","ab":"latin.png","rl":"White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":3,"po":1,"fs":["Total.png","Puma.png","Engen.png","Goil.png","StarOil.png","Total.png","AlliedOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"gibraltar":{"c":"Europe","dr":"Right","l":"English","cr":"Gibraltar Pound - £","dm":".gi","ph":"+350","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Cepsa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"greece":{"c":"Europe","dr":"Right","l":"Greek","cr":"Euro - €","dm":".gr","ph":"+30","ab":"greek.png","rl":"White Outside - White Inside","sx":["οδός","πλατεία","αγορά","αλλού","περιφέρειας","λεωφόρος","δρόμος","κάμπος","γέφυρα","βρύση"],"bc":1,"pc":1,"po":1,"fs":["EKO.png","Revoil.png","Elin.png","AegeanOil.png","SilkOil.png","Avin.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"greenland":{"c":"North America","dr":"Right","cr":"Danish krone - kr","dm":".gl","ph":"+299","ab":"latin.png","rl":"White Outside - White Inside","sx":["Vej","Gade","Plads","Torv","Allé","Sti","Grønland","Havn","Bakke"],"bc":1,"pc":2,"po":2,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"guam":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".gu","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Drive","Court","Circle","Close"],"bc":1,"pc":2,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"guatemala":{"c":"North America","dr":"Right","l":"Spanish","cr":"Guatemalan quetzal - Q","dm":".gt","ph":"+502","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":4,"po":1,"fs":["Texaco.png","Puma.png","Uno.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"hungary":{"c":"Europe","dr":"Right","l":"Hungarian","cr":"Forint - Ft","dm":".hu","ph":"+36","ab":"hungarian.png","rl":"White Outside - White Inside","sx":["Utca","Tér","út","Körút","Sétány","Köz","Park","Híd","Tér"],"bc":2,"pc":3,"po":1,"fs":["Lukoil.png","OMV.png","MOL.png","Avia.png","AS24.png","Auchan.png","MOL.png","Agip.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"iceland":{"c":"Europe","dr":"Right","l":"Icelandic","cr":"Icelandic krÃ³na - kr","dm":".is","ph":"+354","ab":"icelandic.png","rl":"White Outside - White Inside","sx":["Gata","Braut","Vegur","Stígur","ás","Vík","Bakki","Höfði","Gata"],"bc":1,"pc":3,"po":1,"fs":["N1.png","Orkan.png","AO.png","Skeljungur.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"india":{"c":"Asia","dr":"Left","cr":"Indian Rupee - ₹","dm":".in","ph":"+91","ab":"devanagari.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":3,"pc":5,"po":1,"fs":["IndianOil.png","BharatPetroleum.png","HindustanPetroleum.png","ReliancePetroleum.png","EssarOil.png","Nayara.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"indonesia":{"c":"Asia","dr":"Left","l":"Indonesian","cr":"Indonesian Rupiah - Rp","dm":".id","ph":"+62","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Jalan","Gang","Lorong","Perumahan","Desa","Kecamatan","Kampung","Pemukiman","Paseban","Gang"],"bc":2,"pc":3,"po":1,"fs":["Caltex.png","Pertamina.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ireland":{"c":"Europe","dr":"Left","cr":"Euro - €","dm":".ie","ph":"+353","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["Esso.png","Texaco.png","Tesco.png","Maxol.png","Applegreen.png","EmoOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"isle-of-man":{"c":"Europe","dr":"Left","cr":"British Pound - £","dm":".im","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":1,"po":1,"fs":["Total.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"israel":{"c":"Asia","dr":"Right","cr":"Israeli new shekel - ₪","dm":".il","ph":"+972","ab":"hebrew.png","rl":"Yellow Outside - White Inside","sx":["רחוב","כיכר","בית","מסלול","סמטה","גינה","מעבר","שדרות"],"bc":1,"pc":3,"po":1,"fs":["PazOilCompany.png","Delek.png","Sonol.png","DorAlon.png","TenPetroleum.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"italy":{"c":"Europe","dr":"Right","l":"Italian","cr":"Euro - €","dm":".it","ph":"+39","ab":"latin.png","rl":"White Outside - White Inside","sx":["Via","Piazza","Strada","Viale","Corso","Vicolo","Piazzale","Lungomare","Salita","Traversa"],"bc":2,"pc":4,"po":1,"fs":["Esso.png","Q8.png","Eni.png","Repsol.png","Avia.png","Tamoil.png","Agip.png","IP.png","AS24.png","Auchan.png","Agip.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"japan":{"c":"Asia","dr":"Left","l":"Japanese","cr":"Yen -  ¥","dm":".jp","ph":"+81","ab":"japanese.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["通り","道","町","番地","丁目","ヶ町","ヶ丁目","地割","公園","橋"],"bc":3,"pc":4,"po":1,"fs":["ENEOS.png","Idemitsu.png","CosmoOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"jersey":{"c":"Europe","dr":"Left","cr":"British Pound - £","dm":".je","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":1,"po":1,"fs":["Total.png","Esso.png","Rubis.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"jordan":{"c":"Asia","dr":"Right","l":"Arabic","cr":"Jordanian Dinar - د.ا","dm":".jo","ph":"+962","ab":"arabic.png","rl":"Yellow Outside - White Inside","sx":["شارع","ميدان","ساحة","طريق","جادة","زقاق","حارة","جسر","دوار","ساحة"],"bc":1,"pc":3,"po":1,"fs":["Total.png","ManaseerOilGas.png","Total.png","JoPetro.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"kenya":{"c":"Africa","dr":"Left","cr":"Kenyan Shilling - KSh","dm":".ke","ph":"+254","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Lane","Avenue","Street","Way","Boulevard","Drive","Court","Circle","Close"],"bc":2,"pc":3,"po":1,"fs":["Total.png","OiLibya.png","VivoEnergy.png","KenolKobil.png","NationalOilCorporationofKenya.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"kyrgyzstan":{"c":"Asia","dr":"Right","cr":"Kyrgyzstani som - COM","dm":".kg","ph":"+996","ab":"cyrillic.png","rl":"White Outside - White Inside","sx":["улица","площадь","проспект","переулок","квартал","аллея","мост","тракт","бульвар"],"bc":1,"pc":4,"po":1,"fs":["EcoPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"laos":{"c":"Asia","dr":"Right","l":"Lao","cr":"Lao Kip - ₭","dm":".la","ph":"+856","ab":"lao.png","rl":"White Outside - White Inside","sx":["ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ","ຖະຫນົນ"],"bc":1,"pc":1,"po":1,"fs":["PTT.png","LaoStateFuelCompany.png","PTT.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"latvia":{"c":"Europe","dr":"Right","l":"Latvian","cr":"Euro - €","dm":".lv","ph":"+371","ab":"latin.png","rl":"White Outside - White Inside","sx":["Iela","Laukums","Bulvāris","Gatve","Ceļš","Aleja","Promenāde","Tilts","Skvērs","Pļavas"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","Neste.png","Dinaz.png","AstarteNafta.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"lesotho":{"c":"Africa","dr":"Left","cr":"Lesotho Loti (LSL), South African Rand (ZAR) - L, R","dm":".ls","ph":"+266","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":3,"po":1,"fs":["Total.png","Engen.png","Excel.png","Total.png","Engen.png","Shell.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"lithuania":{"c":"Europe","dr":"Right","l":"Lithuanian","cr":"Euro - €","dm":".lt","ph":"+370","ab":"lithuanian.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Gatvė","Aikštė","Skveras","Kelias","Alėja","Parkas","Takas","Tiltas","Miestelis","Namų"],"bc":1,"pc":2,"po":1,"fs":["Lukoil.png","Orlen.png","Neste.png","Viada.png","BalticPetroleum.png","Dujos.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"luxembourg":{"c":"Europe","dr":"Right","cr":"Euro - €","dm":".lu","ph":"+352","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Rond","point","Impasse","Allée","Chemin","Route","Quai"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Esso.png","Texaco.png","Q8.png","Aral.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"madagascar":{"c":"Africa","dr":"Right","cr":"Malagasy ariary - Ar","dm":".mg","ph":"+261","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Route","Impasse","Place","Voie","Carrefour","Quartier","Passage"],"bc":1,"pc":3,"po":1,"fs":["Total.png","BunkerOil.png","BestStasjon.png","Galana.png","Jovena.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"malaysia":{"c":"Asia","dr":"Left","l":"Malay","cr":"Malaysian ringgit - RM","dm":".my","ph":"+60","ab":"latin.png","rl":"White Outside - White Inside","sx":["Jalan","Lorong","Persiaran","Lebuh","Persimpangan","Taman","Kampung","Pekan","Jalan","Jalan"],"bc":4,"pc":4,"po":1,"fs":["Caltex.png","Petron.png","Neste.png","Petronas.png","BHPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"malta":{"c":"Europe","dr":"Left","cr":"Euro - €","dm":".mt","ph":"+356","ab":"latin.png","rl":"White Outside - White Inside","sx":["Triq","Square","Road","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["Enemed.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"mexico":{"c":"North America","dr":"Right","l":"Spanish","cr":"Mexican Peso - $","dm":".mx","ph":"+52","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Callejón","Camino","Boulevard","Paseo","Sendero","Corredor","Rambla"],"bc":1,"pc":20,"po":1,"fs":["Total.png","Arco.png","Pemex.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"monaco":{"c":"Europe","dr":"Right","l":"French","cr":"Euro  - €","dm":".mc","ph":"+377","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Impasse","Place","Quai","Promenade","Voie","Escalier","Terrasse"],"bc":1,"pc":4,"po":1,"fs":["Avia.png","Agip.png","Esso.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"mongolia":{"c":"Asia","dr":"Right","l":"Mongolian","cr":"Mongolian tögrög - ₮","dm":".mn","ph":"+976","ab":"cyrillic.png","rl":"White Outside - White Inside","sx":["гудамж","төлөө","хөдөлгөөнт","гудамж","гудамж","мөргөлдөөн","дөрөв","суурилуулалт","шалгаруулалт","өргөн"],"bc":1,"pc":2,"po":1,"fs":["MagnaiTrade.png","Shunkhlai.png","Petrovis.png","SodMongolGroup.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"montenegro":{"c":"Europe","dr":"Right","l":"Montenegrin","cr":"Euro - €","dm":".me","ph":"+382","ab":"montenegrin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Ulica","Trg","Bulevar","Put","Sokak","Ploča","Most","Aleja","Promenada","Ulaz"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","EKO.png","Petrol.png","INA.png","Teboil.png","EuroPetrol.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"netherlands":{"c":"Europe","dr":"Right","l":"Dutch","cr":"Euro - €","dm":".nl","ph":"+31","ab":"latin.png","rl":"White Outside - White Inside","sx":["Straat","Weg","Laan","Plein","Gracht","Hof","Dijk","Steeg","Park","Allee"],"bc":3,"pc":4,"po":1,"fs":["Total.png","Esso.png","Lukoil.png","Texaco.png","Q8.png","Avia.png","Tamoil.png","Gulf.png","Tango.png","Firezone.png","Argos.png","Sakko.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"new-zealand":{"c":"Oceania","dr":"Left","l":"English","cr":"New Zealand Dollar - NZ$","dm":".nz","ph":"+64","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":2,"fs":["Caltex.png","ZEnergy.png","Caltex.png","Mobil.png","Gull.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"nigeria":{"c":"Africa","dr":"Right","l":"English","cr":"Nigerian Naira - ₦","dm":".ng","ph":"+234","ab":"latin.png","rl":"Yellow Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Crescent","Drive","Court","Circle","Close"],"bc":1,"pc":4,"po":1,"fs":["Total.png","ForteOil.png","Oando.png","Mobil.png","Conoil.png","MRSOilNigeria.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"north-macedonia":{"c":"Europe","dr":"Right","l":"Macedonian","cr":"Macedonian Denar - ден","dm":".mk","ph":"+389","ab":"cyrillic.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["улица","плоштад","булевар","пат","камен","мост","алеја","тракт","проход","плоштад"],"bc":4,"pc":4,"po":1,"fs":["Lukoil.png","Makpetrol.png","OKTA.png","Gazprom.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"northern-mariana-islands":{"c":"Oceania","dr":"Right","cr":"United States Dollar - $","dm":".mp","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Road","Avenue","Drive","Way","Boulevard","Circle","Court","Lane","Parkway","Plaza"],"bc":1,"pc":1,"po":1,"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"norway":{"c":"Europe","dr":"Right","l":"Norwegian","cr":"Norwegian Krone - kr","dm":".no","ph":"+47","ab":"dano-norwegian.png","rl":"White Outside - Yellow Inside","sx":["Gate","Vei","Plass","Allé","Veg","Stien","Torg","Gata","Bakken","Havn"],"bc":1,"pc":4,"po":1,"fs":["Esso.png","Uno-X.png","St1.png","YXEnergi.png","BunkerOil.png","BestStasjon.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"peru":{"c":"South America","dr":"Right","l":"Spanish","cr":"Sol - S/.","dm":".pe","ph":"+51","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":2,"po":1,"fs":["Repsol.png","Primax.png","Repsol.png","PetroPeru.png","Pecsa.png","GrifoMapco.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"philippines":{"c":"Asia","dr":"Right","cr":"Philippine Peso - ₱","dm":".ph","ph":"+63","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":2,"pc":4,"po":1,"fs":["Caltex.png","PTT.png","EasternPetroleum.png","Unioil.png","Petron.png","PhoenixPetroleum.png","Seaoil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"poland":{"c":"Europe","dr":"Right","l":"Polish","cr":"złoty - zł","dm":".pl","ph":"+48","ab":"polish.png","rl":"White Outside - White Inside","sx":["Ulica","Plac","Aleja","Skwer","Deptak","Rondo","Droga","Most","ścieżka","Pasaż"],"bc":2,"pc":4,"po":1,"fs":["Total.png","Lukoil.png","Aral.png","Avia.png","Orlen.png","AS24.png","Tesco.png","Auchan.png","GrupaLotos.png","BP.png","CircleK.png","Statoil.png","PKNOrlen.png","Lotos.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"portugal":{"c":"Europe","dr":"Right","l":"Portuguese","cr":"Euro - €","dm":".pt","ph":"+351","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Rua","Avenida","Estrada","Travessa","Calçada","Beco","Largo","Praça","Rotunda","Passeio"],"bc":2,"pc":4,"po":1,"fs":["Repsol.png","Avia.png","Cepsa.png","Galp.png","Intermarche.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"puerto-rico":{"c":"North America","dr":"Right","cr":"United States Dollar - $","dm":".pr","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Calle","Avenida","Carretera","Boulevard","Carr","Paseo","Camino","Pasaje","Autopista"],"bc":1,"pc":1,"po":1,"fs":["Total.png","Puma.png","Puma.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"qatar":{"c":"Asia","dr":"Right","l":"Arabic","cr":"Qatari Riyal - ﷼","dm":".qa","ph":"+974","ab":"arabic.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":3,"po":1,"fs":["Woqod.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"romania":{"c":"Europe","dr":"Right","l":"Romanian","cr":"Romanian Leu - lei","dm":".ro","ph":"+40","ab":"romanian.png","rl":"White Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Strada","Bulevard","Avenue","Piața","Calea","Aleea","Bulevardul","Strada","Pasaj","șoseaua"],"bc":1,"pc":4,"po":1,"fs":["Lukoil.png","OMV.png","MOL.png","Gazprom.png","Petrom.png","Rompetrol.png","Socar.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"russia":{"c":"Asia","dr":"Right","l":"Russian","cr":"Russian Ruble - ₽","dm":".ru","ph":"+7","ab":"russian.png","rl":"Yellow Outside - White Inside / White Outside - White Inside / White Outside - Yellow Inside","sx":["улица","площадь","проспект","переулок","аллея","бульвар","тракт","мост","переезд","шоссе"],"bc":2,"pc":4,"po":1,"fs":["Lukoil.png","Texaco.png","EcoPetrol.png","Gazprom.png","Rosneft.png","Tatneft.png","Surgutneftegas.png","Bashneft.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"rwanda":{"c":"Africa","dr":"Right","cr":"Rwandan Franc - FRw","dm":".rw","ph":"+250","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Ruko","Kimironko","Ibuye","Umujyi","Huye","Akarere","Umu","Cyerezo","Akagali","Mu"],"bc":1,"pc":4,"po":1,"fs":["Engen.png","SP.png","KenolKobil.png","HashiEnergy.png","MountMeru.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"san-marino":{"c":"Europe","dr":"Right","l":"Italian","cr":"Euro - €","dm":".sm","ph":"+378","ab":"latin.png","rl":"White Outside - White Inside","sx":["Via","Piazza","Strada","Viale","Corso","Vicolo","Passaggio","Salita","Piazzetta","Ramo"],"bc":1,"pc":1,"po":1,"fs":["Tamoil.png","Agip.png","IP.png","Eni.png","Q8.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"senegal":{"c":"Africa","dr":"Right","l":"French","cr":"West African CFA franc - CFA","dm":".sn","ph":"+221","ab":"latin.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Voie","Impasse","Quartier","Pont","Carrefour","Passement"],"bc":3,"pc":2,"po":1,"fs":["Total.png","Puma.png","OiLibya.png","Elton.png","Petrosen.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"serbia":{"c":"Europe","dr":"Right","l":"Serbian","cr":"Serbian dinar - RSD","dm":".rs","ph":"+381","ab":"serbian.png","rl":"White Outside - White Inside","sx":["Ulica","Trg","Bulevar","Put","Sokak","Ploča","Most","Aleja","Promenada","Ulaz"],"bc":2,"pc":3,"po":1,"fs":["Lukoil.png","OMV.png","EKO.png","MOL.png","Avia.png","Gazprom.png","Petrol.png","NIS.png","EKO.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"singapore":{"c":"Asia","dr":"Left","cr":"Singapore Dollar - S$","dm":".sg","ph":"+65","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Road","Avenue","Lane","Street","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":3,"po":1,"fs":["Esso.png","Neste.png","OMV.png","SingaporePetroleumCompany.png","Caltex.png","SPC.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"slovakia":{"c":"Europe","dr":"Right","l":"Slovak","cr":"Euro - €","dm":".sk","ph":"+421","ab":"slovak.png","rl":"White Outside - White Inside","sx":["Ulica","Námestie","Cesta","Alej","Most","Park","Dvor","Rampa","Obchodná"],"bc":1,"pc":4,"po":1,"fs":["OMV.png","Orlen.png","Benzina.png","Tesco.png","Lotos.png","Slovnaft.png","Avia.png","Lukoil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"slovenia":{"c":"Europe","dr":"Right","l":"Slovene","cr":"Euro - €","dm":".si","ph":"+386","ab":"slovene.png","rl":"White Outside - White Inside","sx":["Ulica","Trg","Avenija","Cesta","Pot","Promenada","Most","Galerija","Nabrežje","Ploščad"],"bc":2,"pc":4,"po":1,"fs":["Q8.png","Agip.png","Petrol.png","Hofer.png","AS24.png","Tifon.png","MOL.png","OMV.png","Crodux.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"south-africa":{"c":"Africa","dr":"Left","cr":"South African Rand - R","dm":".za","ph":"+27","ab":"latin.png","rl":"Yellow Outside - White Inside / Red Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":9,"po":1,"fs":["Total.png","Puma.png","Caltex.png","BP.png","Chevron.png","Sasol.png","Engen.png","BP.png","Shell.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"south-korea":{"c":"Asia","dr":"Right","l":"Korean","cr":"South Korean won - ₩","dm":".kr","ph":"+82","ab":"hangul.png","rl":"White Outside - Yellow Inside","sx":["로","길","거리","로","길","거리","산길","길","길","로"],"bc":1,"pc":3,"po":1,"fs":["SKEnergy.png","GSCaltex.png","HyundaiOilbank.png","S-Oil.png","E1.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"spain":{"c":"Europe","dr":"Right","l":"Spanish","cr":"Euro - €","dm":".es","ph":"+34","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Calle","Avenida","Plaza","Paseo","Carretera","Camino","Boulevard","Ronda","Pueblo","Rambla"],"bc":2,"pc":4,"po":1,"fs":["Avia.png","Tamoil.png","Carrefour.png","AS24.png","E.Leclerc.png","BP.png","Galp.png","Repsol.png","Cepsa.png","Disa.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"sri-lanka":{"c":"Asia","dr":"Left","cr":"Sri Lankan Rupee - Rs, රු","dm":".lk","ph":"+94","ab":"sinhala.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["පාර","පාර","පාර","පාර","පාර","පාර","පාර","පාර","පාර"],"bc":2,"pc":1,"po":1,"fs":["Caltex.png","CeylonPetroleumCorporation.png","LankaIOC.png","Laugfs.png","LitroGasLanka.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"sweden":{"c":"Europe","dr":"Right","l":"Swedish","cr":"Swedish Krona - kr","dm":".se","ph":"+46","ab":"swedish.png","rl":"White Outside - White Inside","sx":["Gatan","Vägen","Platsen","Gränden","Allén","Stråket","Vägen","Torg","Backen"],"bc":5,"pc":4,"po":1,"fs":["Total.png","Ingo.png","Q8.png","CircleK.png","Preem.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"switzerland":{"c":"Europe","dr":"Right","cr":"Swiss franc - CHF","dm":".ch","ph":"+41","ab":"latin.png","rl":"White Outside - White Inside","sx":["Strasse","Weg","Platz","Allee","Ring","Gasse","Promenade","Hauptstrasse","Pfad"],"bc":2,"pc":4,"po":1,"fs":["Esso.png","Eni.png","Agip.png","Socar.png","Avia.png","Tamoil.png","Migrol.png","Agrola.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"taiwan":{"c":"Asia","dr":"Right","l":"Mandarin Chinese","cr":"New Taiwan Dollar - NT$","dm":".tw","ph":"+886","ab":"chinese.png","rl":"White Outside - Yellow Inside","bc":1,"pc":3,"po":1,"fs":["CPCCorporation.png","FormosaPetrochemicalCorp.png","TaiwanSugarCorporation.png","Uni-President.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"thailand":{"c":"Asia","dr":"Left","l":"Thai","cr":"Thai Baht - ฿","dm":".th","ph":"+66","ab":"thai.png","rl":"White Outside - Yellow Inside","sx":["ถนน","ซอย","ตรอก","แยก","แม่น้ำ","ป่า","สะพาน","ทาง","พื้นที่","เขต"],"bc":1,"pc":4,"po":1,"fs":["Caltex.png","PTT.png","Esso.png","Bangchak.png","PTGEnergy.png","Susco.png","Jiffy.png","Pure.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"tunisia":{"c":"Africa","dr":"Right","l":"Arabic","cr":"Tunisian dinar - DT","dm":".tn","ph":"+216","ab":"arabic.png","rl":"White Outside - White Inside","sx":["Rue","Avenue","Boulevard","Place","Voie","Impasse","Quartier","Pont","Carrefour","Passage"],"bc":1,"pc":2,"po":1,"fs":["Total.png","OiLibya.png","Staroil.png","Agil.png","VivoEnergy.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"turkey":{"c":"Europe","dr":"Right","l":"Turkish","cr":"Turkish Lira - ₺","dm":".tr","ph":"+90","ab":"turkish.png","rl":"White Outside - White Inside / White Outside - Yellow Inside / Yellow Outside - Yellow Inside","sx":["Sokak","Cadde","Bulvar","Mahallesi","Caddesi","Sokağı","Köyü","Mevkii","Kavşak","çıkmaz"],"bc":2,"pc":4,"po":1,"fs":["Lukoil.png","Total.png","Opet.png","PetrolOfisi.png","BP.png","MOil.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"uganda":{"c":"Africa","dr":"Left","cr":"Ugandan shilling - USh","dm":".ug","ph":"+256","ab":"latin.png","rl":"White Outside - White Inside / White Outside - Yellow Inside","bc":1,"pc":3,"po":1,"fs":["Total.png","OiLibya.png","Total.png","VivoEnergy.png","OryxEnergies.png","HassPetroleum.png","Petrocity.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"ukraine":{"c":"Europe","dr":"Right","l":"Ukrainian","cr":"Ukrainian Hryvnia - ₴","dm":".ua","ph":"+380","ab":"ukrainian.png","rl":"White Outside - White Inside","sx":["вулиця","площа","проспект","провулок","алея","бульвар","тракт","міст","перехрестя","шосе"],"bc":2,"pc":4,"po":1,"fs":["OKKO.png","WOG.png","Socar.png","KLO.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-arab-emirates":{"c":"Asia","dr":"Right","l":"Arabic","cr":"UAE dirham - د.إ","dm":".ae","ph":"+971","ab":"arabic.png","rl":"Yellow Outside - White Inside / Yellow Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":1,"pc":4,"po":1,"fs":["ADNOC.png","ENOC.png","EPPCO.png","Emarat.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-kingdom":{"c":"Europe","dr":"Left","l":"English","cr":"Pound Sterling - £","dm":".uk","ph":"+44","ab":"latin.png","rl":"Yellow Outside - White Inside / White Outside - White Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":3,"pc":1,"po":1,"fs":["Esso.png","Texaco.png","Jet.png","Tesco.png","Morrisons.png","AsdaPetrolStations.png","SainsburysPetrolStations.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"united-states":{"c":"North America","dr":"Right","l":"English","cr":"US Dollar - $","dm":".us","ph":"+1","ab":"latin.png","rl":"White Outside - Yellow Inside","sx":["Street","Road","Avenue","Lane","Way","Boulevard","Crescent","Drive","Court","Circle"],"bc":6,"pc":53,"po":1,"fs":["BP.png","Lukoil.png","CircleK.png","Gulf.png","Mobil.png","Costco.png","7-Eleven.png","Irving.png","Pemex.png","Wawa.png","Meijer.png","H-E-B.png","CaseysGeneralStores.png","Kroger.png","Albertsons.png","GiantEagle.png","Safeway.png","Target.png","Walmart.png","BJsWholesaleClub.png","SamsClub.png","MurphyUSA.png","QuikTrip.png","RaceTrac.png","Sheetz.png","HolidayStationstores.png","Maverik.png","KwikTrip.png","CumberlandFarms.png","LovesTravelStops.png","PilotFlyingJ.png","TravelCentersofAmerica.png","Exxon.png","Sunoco.png","Phillips66.png","Valero.png","MarathonPetroleum.png","Tesoro.png","Sinclair.png","Conoco.png","Hy-Vee.png","Mobil.png","RaceTrac.png","Shell.png","ExxonMobil.png","Texaco.png","Chevron.png","Arco.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"uruguay":{"c":"South America","dr":"Right","l":"Spanish","cr":"Uruguayan peso - $U","dm":".uy","ph":"+598","ab":"latin.png","sx":["Calle","Avenida","Pasaje","Camino","Boulevard","Paseo","Senda","Corredor","Rambla"],"bc":1,"pc":3,"po":1,"fs":["Petrobras.png","ANCAP.png","DUCSA.png","Petrobras.png","Esso.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"us-virgin-islands":{"c":"North America","dr":"Left","l":"English","cr":"United States Dollar - $","dm":".vi","ab":"latin.png","rl":"White Outside - Yellow Inside","bc":1,"pc":1,"po":1,"fs":["Total.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]},"vietnam":{"c":"Asia","dr":"Right","l":"Vietnamese","cr":"Vietnamese dong - ₫","dm":".vn","ph":"+84","ab":"vietnamese.png","sx":["đường","Phố","Hẻm","Ngõ","Quận","đường","Hẻm","Quận","Phường","Khu"],"bc":1,"pc":2,"po":1,"fs":["Petrolimex.png","PVOil.png","BinhSonRefiningandPetrochemicalJSC.png","VietNamNationalGasolineCompany.png","DongThapPetroleumTradingImportExportCompany.png"],"sg":["bend","chevron","pedestrian","roundabout","stop","yield"]}};
-
-    function capitalizeWord(str) {
-        if (!str) return "";
-        return str.charAt(0).toUpperCase() + str.slice(1);
-    }
-
-    function getStreetViewStaticUrl(pano, heading, pitch, lat, lng) {
-        const key = (window.__GEOGUESSR_CONFIG__ && window.__GEOGUESSR_CONFIG__.googleMapsApiKey) || "AIzaSyDqRTXlnHXELLKn7645Q1L_5oc4CswKZK4";
-        const h = typeof heading === "number" ? Math.round(heading) : 0;
-        const p = typeof pitch === "number" ? Math.round(pitch) : 0;
-        if (pano) {
-            return `https://maps.googleapis.com/maps/api/streetview?size=400x200&pano=${encodeURIComponent(pano)}&heading=${h}&pitch=${p}&fov=60&key=${key}`;
-        }
-        if (lat && lng) {
-            return `https://maps.googleapis.com/maps/api/streetview?size=400x200&location=${lat},${lng}&heading=${h}&pitch=${p}&fov=60&key=${key}`;
-        }
+        return marker + result;
+    } catch (_) {
         return "";
     }
+}
 
-    function getGeoGuessrImageUrls(rawPath, isPano, heading, pitch) {
-        const svStatic = getStreetViewStaticUrl(currentPanoId, heading, pitch, globalCoordinates.lat, globalCoordinates.lng);
-        if (!rawPath) {
-            return {
-                primary: svStatic,
-                fallback: svStatic,
-                fallback2: svStatic
-            };
-        }
-        const str = String(rawPath).trim();
-        if (str.startsWith("data:image/") || str.startsWith("blob:")) {
-            return { primary: str, fallback: str, fallback2: str };
-        }
-        if (str.startsWith("http://") || str.startsWith("https://")) {
-            return {
-                primary: str,
-                fallback: svStatic || str,
-                fallback2: str
-            };
-        }
-        const clean = str.replace(/^\/+/, "");
-        const base = (window.__GEOGUESSR_CONFIG__ && window.__GEOGUESSR_CONFIG__.imageBaseUrl) || "https://www.geoguessr.com/images";
-        return {
-            primary: `${base}/resize:fit:240:0/gravity:ce/plain/${clean}`,
-            fallback: "https://www.geoguessr.com/" + clean,
-            fallback2: svStatic || ("https://www.geoguessr.com/images/" + clean)
-        };
+// =================== Terms Interceptor ===================
+function isTermsElement(target) {
+    if (!target) return false;
+    try {
+        const a = target.closest ? target.closest("a") : (target.tagName === "A" ? target : null);
+        if (!a) return false;
+        const text = (a.textContent || "").trim();
+        const href = (a.getAttribute("href") || "").toLowerCase();
+        return text.includes("Terms") || text.includes("Map Terms") || text.includes("Persyaratan") || href.includes("terms_maps") || href.includes("help/terms");
+    } catch (_) {
+        return false;
     }
+}
 
-    function getTypeBadge(type) {
-        const t = (type || "").toLowerCase();
-        if (t.includes("sign")) return "🪧 Road Signs";
-        if (t.includes("plate")) return "🚘 License Plates";
-        if (t.includes("arch")) return "🏛️ Architecture";
-        if (t.includes("lang")) return "🔤 Language";
-        if (t.includes("pole") || t.includes("infra")) return "🪵 Infrastructure";
-        if (t.includes("bollard")) return "📍 Bollard";
-        if (t.includes("line") || t.includes("mark")) return "🛣️ Road Lines";
-        if (t.includes("nature") || t.includes("land")) return "🌲 Landscape";
-        return "💡 " + (t ? t.replace(/-/g, " ").toUpperCase() : "CLUE");
-    }
-
-    function getComplexityBadge(comp) {
-        const n = Number(comp) || 1;
-        if (n === 1) return '<span class="clue-complexity-badge complexity-1">⭐ Easy</span>';
-        if (n === 2) return '<span class="clue-complexity-badge complexity-2">⭐⭐ Medium</span>';
-        return '<span class="clue-complexity-badge complexity-3">⭐⭐⭐ Advanced</span>';
-    }
-
-    function renderIrisClueCard(item, isPano) {
-        const rawImg = item.image || item.imagePath || item.imageUrl || item.picture || item.media || "";
-        const urls = getGeoGuessrImageUrls(rawImg, isPano, item.heading, item.pitch);
-        const title = escapeHtml(getClueText(item.title, isPano ? "Panorama Clue" : "Country Clue"));
-        const desc = escapeHtml(getClueText(item.description, ""));
-        const typeBadge = getTypeBadge(item.type || item.category);
-        const compBadge = item.complexity ? getComplexityBadge(item.complexity) : "";
-        const hasHeading = typeof item.heading === "number";
-        const headingBadge = hasHeading
-            ? `<span class="clue-heading-pill">🧭 Heading ${Math.round(item.heading)}°</span>`
-            : "";
-        const focusAttr = hasHeading
-            ? `onclick="if(window.parent&&window.parent.__adguards_focus_clue){window.parent.__adguards_focus_clue(${item.heading},${item.pitch||0});}" title="Click to rotate Street View camera to clue"`
-            : "";
-        const cardStyle = hasHeading ? "cursor: pointer;" : "";
-        const imgUrl = urls.primary;
-
-        return `
-            <div class="iris-card" style="${cardStyle}" ${focusAttr}>
-                <div class="iris-card-top">
-                    <div class="iris-brand">
-                        <span class="iris-dot"></span>
-                        <span class="iris-brand-text">IRIS AI</span>
-                    </div>
-                    <div class="iris-card-tags">
-                        <span class="clue-type-pill">${typeBadge}</span>
-                        ${compBadge}
-                        ${headingBadge}
-                    </div>
-                </div>
-                ${title ? `<div class="clue-title">${title}</div>` : ""}
-                ${imgUrl ? `
-                    <div class="clue-image-container">
-                        <img class="clue-photo" 
-                             src="${imgUrl}" 
-                             alt="${title}" 
-                             loading="lazy" 
-                             onerror="if(!this._tried){this._tried=1;if('${urls.fallback}')this.src='${urls.fallback}';else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}}else if(this._tried===1){this._tried=2;if('${urls.fallback2}')this.src='${urls.fallback2}';else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}}else{this.style.display='none';var fb=this.nextElementSibling;if(fb)fb.style.display='flex';}"
-                        />
-                        <div class="clue-photo-fallback" style="display:none;">
-                            <span class="photo-fallback-icon">📸</span>
-                            <span>${title || "GeoGuessr Clue Photo"}</span>
-                        </div>
-                        ${hasHeading ? `<div class="clue-look-hint">👁️ Click to rotate camera (${Math.round(item.heading)}°)</div>` : ""}
-                    </div>
-                ` : (isPano && hasHeading && cachedGeoGuessrClues.loading ? `
-                    <div class="clue-image-container">
-                        <div class="clue-photo-loading">
-                            <span class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></span>
-                            <span>Loading Street View Clue Photo...</span>
-                        </div>
-                    </div>
-                ` : "")}
-                ${desc ? `
-                    <div class="iris-bubble">
-                        <div class="iris-bubble-content">${desc}</div>
-                    </div>
-                ` : ""}
-            </div>
-        `;
-    }
-
-    function renderIrisSectionContent(panoClues, countryClues, isLoading, countryName) {
-        let out = `
-            <div class="section-divider section-divider-iris">🎯 2. Street View & Iris AI Clues</div>
-        `;
-
-        if (isLoading) {
-            out += `
-                <div class="loading-box">
-                    <div class="spinner"></div>
-                    <span>Fetching official GeoGuessr Iris clues...</span>
-                </div>
-            `;
-        }
-
-        if (panoClues.length > 0) {
-            out += `
-                <div class="sub-divider">📍 Panorama Clues (${panoClues.length})</div>
-                ${panoClues.map(item => renderIrisClueCard(item, true)).join("")}
-            `;
-        }
-
-        if (countryClues.length > 0) {
-            out += `
-                <div class="sub-divider">🗺️ Country Clues (${countryClues.length})</div>
-                ${countryClues.map(item => renderIrisClueCard(item, false)).join("")}
-            `;
-        }
-
-        if (!isLoading && panoClues.length === 0 && countryClues.length === 0) {
-            out += `
-                <div class="empty-clues-box">
-                    ℹ️ No official GeoGuessr Iris visual clues returned for ${escapeHtml(countryName || "this location")}. Use the general country guide below.
-                </div>
-            `;
-        }
-
-        return out;
-    }
-
-    function generatePlonkitRewrittenHtml(countryCode, countryName, state, coordinates) {
-        const c = (countryCode || "").toUpperCase();
-        const codeLower = c.toLowerCase() || "un";
-        const slug = getCountrySlug(countryName, countryCode);
-        const capSlug = capitalizeWord(slug);
-        const geo = GEOMASTR_DATA[slug] || {};
-
-        // Coordinates for Map
-        const coords = coordinates || globalCoordinates || { lat: 0, lng: 0 };
-        const lat = Number(coords.lat) || 0;
-        const lng = Number(coords.lng) || 0;
-        const hasCoords = lat !== 0 || lng !== 0;
-
-        // Core metadata strictly from Geomastr (PC Optimized)
-        const drive = (geo.dr || "Right").trim();
-        const continent = geo.c || "World";
-        const language = geo.l || "";
-        const currency = geo.cr || "";
-        const domain = geo.dm || ("." + codeLower);
-        const phone = geo.ph || "";
-
-        const isLeft = drive.toLowerCase() === "left" || drive.toLowerCase() === "kiri";
-        const driveColor = isLeft ? "#f59e0b" : "#38bdf8";
-        const driveBg = isLeft ? "rgba(245, 158, 11, 0.15)" : "rgba(56, 189, 248, 0.15)";
-        const driveBorder = isLeft ? "rgba(245, 158, 11, 0.35)" : "rgba(56, 189, 248, 0.35)";
-
-        // Geomastr Media URLs & Visual Guides
-        const alphabetImgUrl = geo.ab ? `https://geomastr.com/assets/media/languages/${geo.ab}` : "";
-        const roadLinesText = geo.rl || "";
-        const suffixes = geo.sx || [];
-
-        // Bollards & Plates counts
-        const bollardCount = Math.min(geo.bc || 1, 3);
-        const plateCount = Math.min(geo.pc || 1, 4);
-
-        // Sign types
-        const hasStop = !geo.sg || geo.sg.includes("stop");
-        const hasYield = !geo.sg || geo.sg.includes("yield");
-        const hasPedestrian = !geo.sg || geo.sg.includes("pedestrian");
-        const hasRoundabout = !geo.sg || geo.sg.includes("roundabout");
-        const hasBend = !geo.sg || geo.sg.includes("bend");
-        const hasChevron = !geo.sg || geo.sg.includes("chevron");
-
-        const panoClues = cachedGeoGuessrClues.panoClues || [];
-        const countryClues = cachedGeoGuessrClues.countryClues || [];
-        const isLoading = cachedGeoGuessrClues.loading;
-
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
-    ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.3); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.6); }
-    body {
-        background: #090e1a;
-        color: #f1f5f9;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        padding: 16px;
-        font-size: 13px;
-        line-height: 1.5;
-        user-select: none;
-    }
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding-bottom: 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        margin-bottom: 14px;
-        position: sticky;
-        top: 0;
-        background: #090e1a;
-        z-index: 10;
-    }
-    .header-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    .flag {
-        width: 44px;
-        height: 30px;
-        border-radius: 4px;
-        object-fit: cover;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.6);
-        border: 1px solid rgba(255,255,255,0.15);
-    }
-    .title-group h1 {
-        font-size: 16px;
-        font-weight: 700;
-        color: #ffffff;
-        line-height: 1.2;
-    }
-    .title-group .state {
-        font-size: 11px;
-        color: #94a3b8;
-    }
-    .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .badge-h {
-        background: rgba(56, 189, 248, 0.15);
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        color: #38bdf8;
-        font-size: 10px;
-        font-weight: 700;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-family: monospace;
-    }
-    .btn-close {
-        background: none;
-        border: none;
-        color: #94a3b8;
-        font-size: 18px;
-        cursor: pointer;
-        padding: 2px 6px;
-        line-height: 1;
-        transition: color 0.15s;
-    }
-    .btn-close:hover { color: #ffffff; }
-
-    .badges {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-        margin-bottom: 14px;
-    }
-    .badge {
-        padding: 4px 9px;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 600;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-    }
-    .badge-drive {
-        background: ${driveBg};
-        color: ${driveColor};
-        border: 1px solid ${driveBorder};
-    }
-    .badge-cam {
-        background: rgba(255, 255, 255, 0.06);
-        color: #e2e8f0;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-    }
-    .badge-domain {
-        background: rgba(56, 189, 248, 0.1);
-        color: #38bdf8;
-        border: 1px solid rgba(56, 189, 248, 0.25);
-        font-family: monospace;
-    }
-    .badge-cont { background: rgba(168, 85, 247, 0.12); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.25); }
-    .badge-phone { background: rgba(34, 197, 94, 0.12); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.25); font-family: monospace; }
-    .badge-curr { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.25); }
-
-    .section-divider {
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.8px;
-        text-transform: uppercase;
-        margin: 20px 0 10px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .section-divider::after {
-        content: '';
-        flex: 1;
-        height: 1px;
-    }
-    .section-divider-map {
-        color: #38bdf8;
-    }
-    .section-divider-map::after {
-        background: rgba(56, 189, 248, 0.25);
-    }
-    .section-divider-iris {
-        color: #c084fc;
-    }
-    .section-divider-iris::after {
-        background: rgba(168, 85, 247, 0.25);
-    }
-    .section-divider-meta {
-        color: #34d399;
-    }
-    .section-divider-meta::after {
-        background: rgba(16, 185, 129, 0.25);
-    }
-
-    .sub-divider {
-        font-size: 10.5px;
-        font-weight: 700;
-        color: #94a3b8;
-        margin: 14px 0 8px;
-        letter-spacing: 0.4px;
-        text-transform: uppercase;
-    }
-
-    /* Map Card */
-    .map-card {
-        background: #111827;
-        border: 1px solid rgba(56, 189, 248, 0.35);
-        border-radius: 10px;
-        padding: 8px;
-        margin-bottom: 14px;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-    }
-    /* Geomastr Image Zoom & Lightbox */
-    .img-zoomable, .visual-card img, .img-alphabet, .img-fuel {
-        cursor: zoom-in;
-        transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
-    }
-    .img-zoomable:hover, .visual-card:hover img, .img-alphabet:hover, .img-fuel:hover {
-        transform: scale(1.04);
-        filter: brightness(1.12);
-        box-shadow: 0 4px 14px rgba(56, 189, 248, 0.3);
-    }
-
-    /* Cards */
-    .card {
-        background: #111827;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 10px;
-        padding: 11px 13px;
-        margin-bottom: 9px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-    .card-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: #38bdf8;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 4px;
-    }
-    .card-body {
-        color: #cbd5e1;
-        font-size: 12px;
-        line-height: 1.5;
-    }
-    .tips-card {
-        background: rgba(56, 189, 248, 0.06);
-        border: 1px solid rgba(56, 189, 248, 0.25);
-    }
-    .tips-card .card-title { color: #38bdf8; }
-    .tips-card .card-body { color: #f8fafc; font-weight: 500; }
-
-    /* GeoGuessr Iris AI Clue Cards */
-    .iris-card {
-        background: linear-gradient(135deg, rgba(23, 20, 41, 0.95), rgba(15, 23, 42, 0.95));
-        border: 1px solid rgba(139, 92, 246, 0.28);
-        border-radius: 12px;
-        padding: 13px;
-        margin-bottom: 12px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .iris-card:hover {
-        border-color: rgba(168, 85, 247, 0.55);
-        transform: translateY(-1px);
-    }
-    .iris-card-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-bottom: 8px;
-    }
-    .iris-brand {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .iris-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #a855f7;
-        box-shadow: 0 0 8px #a855f7;
-        animation: irisPulse 2s infinite ease-in-out;
-    }
-    @keyframes irisPulse {
-        0%, 100% { opacity: 0.7; transform: scale(0.9); }
-        50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 12px #c084fc; }
-    }
-    .iris-brand-text {
-        font-size: 10px;
-        font-weight: 800;
-        letter-spacing: 0.8px;
-        background: linear-gradient(90deg, #c084fc, #38bdf8);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-transform: uppercase;
-    }
-    .iris-card-tags {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        flex-wrap: wrap;
-    }
-    .clue-type-pill {
-        background: rgba(139, 92, 246, 0.16);
-        border: 1px solid rgba(139, 92, 246, 0.35);
-        color: #c084fc;
-        font-size: 10px;
-        font-weight: 700;
-        padding: 2px 7px;
-        border-radius: 6px;
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-    }
-    .clue-complexity-badge {
-        font-size: 9.5px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
-    }
-    .complexity-1 {
-        background: rgba(16, 185, 129, 0.15);
-        color: #34d399;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-    .complexity-2 {
-        background: rgba(245, 158, 11, 0.15);
-        color: #fbbf24;
-        border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-    .complexity-3 {
-        background: rgba(168, 85, 247, 0.15);
-        color: #c084fc;
-        border: 1px solid rgba(168, 85, 247, 0.3);
-    }
-    .clue-heading-pill {
-        background: rgba(56, 189, 248, 0.12);
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        color: #38bdf8;
-        font-size: 10px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 5px;
-    }
-    .clue-title {
-        font-size: 13.5px;
-        font-weight: 700;
-        color: #ffffff;
-        margin-bottom: 8px;
-        line-height: 1.35;
-    }
-    .clue-image-container {
-        width: 100%;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #090c14;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        margin-bottom: 10px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-        position: relative;
-    }
-    .clue-look-hint {
-        position: absolute;
-        bottom: 6px;
-        right: 6px;
-        background: rgba(15, 23, 42, 0.85);
-        backdrop-filter: blur(4px);
-        border: 1px solid rgba(56, 189, 248, 0.4);
-        color: #38bdf8;
-        font-size: 10px;
-        font-weight: 600;
-        padding: 2px 7px;
-        border-radius: 4px;
-        pointer-events: none;
-    }
-    .clue-photo {
-        width: 100%;
-        max-height: 180px;
-        object-fit: cover;
-        display: block;
-        transition: transform 0.25s ease;
-    }
-    .clue-photo:hover {
-        transform: scale(1.02);
-    }
-    .clue-photo-fallback {
-        padding: 20px;
-        text-align: center;
-        color: #94a3b8;
-        font-size: 11px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 6px;
-    }
-    .clue-photo-loading {
-        padding: 22px;
-        text-align: center;
-        color: #c084fc;
-        font-size: 11px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-    }
-    .photo-fallback-icon {
-        font-size: 22px;
-    }
-    .iris-bubble {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.07);
-        border-radius: 8px;
-        padding: 9px 11px;
-    }
-    .iris-bubble-content {
-        color: #e2e8f0;
-        font-size: 12px;
-        line-height: 1.5;
-    }
-
-    .loading-box {
-        text-align: center;
-        padding: 16px 10px;
-        color: #c084fc;
-        background: rgba(168, 85, 247, 0.05);
-        border: 1px dashed rgba(168, 85, 247, 0.3);
-        border-radius: 8px;
-        margin-bottom: 12px;
-        font-size: 11.5px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-    }
-    .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(168, 85, 247, 0.25);
-        border-top-color: #c084fc;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
-    .empty-clues-box {
-        padding: 10px 12px;
-        background: rgba(255,255,255,0.02);
-        border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.06);
-        color: #94a3b8;
-        font-size: 11px;
-        line-height: 1.4;
-        margin-bottom: 10px;
-    }
-
-    /* Geomastr Visual Cards & Gallery */
-    .visual-gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-        gap: 8px;
-        margin-top: 6px;
-    }
-    .visual-card {
-        background: #111827;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 9px;
-        padding: 7px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.25);
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .visual-card:hover {
-        border-color: rgba(56, 189, 248, 0.4);
-        transform: translateY(-2px);
-    }
-    .img-bollard {
-        width: 100%;
-        height: 115px;
-        object-fit: contain;
-        background: #090e1a;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.05);
-        margin-bottom: 5px;
-    }
-    .img-plate {
-        width: 100%;
-        height: 60px;
-        object-fit: contain;
-        background: #090e1a;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.05);
-        margin-bottom: 5px;
-    }
-    .img-sign {
-        width: 100%;
-        height: 62px;
-        object-fit: contain;
-        background: #090e1a;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.05);
-        padding: 4px;
-        margin-bottom: 5px;
-    }
-    .img-alphabet {
-        width: 100%;
-        max-height: 85px;
-        object-fit: contain;
-        background: #ffffff !important;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.3);
-        padding: 6px;
-        margin: 0 auto;
-        display: block;
-    }
-    #hint-map-canvas a,
-    #hint-map-canvas .gm-style-cc,
-    #hint-map-canvas .gmnoprint a,
-    #hint-map-canvas a[href*="google.com"],
-    #hint-map-canvas a[href*="maps.google.com"],
-    #hint-map-canvas .leaflet-control-attribution {
-        display: none !important;
-        pointer-events: none !important;
-    }
-    .img-post {
-        width: 100%;
-        height: 65px;
-        object-fit: contain;
-        background: #090e1a;
-        border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.05);
-        padding: 5px;
-        margin-bottom: 5px;
-    }
-    .img-fuel {
-        height: 38px;
-        object-fit: contain;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 6px;
-        padding: 4px 8px;
-    }
-    .card-caption {
-        font-size: 10px;
-        font-weight: 700;
-        color: #38bdf8;
-    }
-    .card-subtext {
-        font-size: 9.5px;
-        color: #94a3b8;
-    }
-
-    /* Suffix Pills */
-    .suffix-wrap {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-top: 6px;
-    }
-    .suffix-pill {
-        background: rgba(56, 189, 248, 0.1);
-        border: 1px solid rgba(56, 189, 248, 0.25);
-        color: #e0f2fe;
-        font-size: 11px;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-family: monospace;
-    }
-
-    /* Road Line Graphic Simulator */
-    .road-sim {
-        background: #1e293b;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 10px 14px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-top: 6px;
-        height: 48px;
-        position: relative;
-    }
-    .road-edge {
-        width: 4px;
-        height: 100%;
-        background: #ffffff;
-        border-radius: 2px;
-    }
-    .road-center {
-        height: 100%;
-        border-left: 3px dashed #ffffff;
-    }
-    .road-label {
-        font-size: 11px;
-        color: #cbd5e1;
-        font-weight: 600;
-        text-align: center;
-        flex: 1;
-        padding: 0 10px;
-    }
-
-    .footer-note {
-        margin-top: 18px;
-        padding-top: 12px;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
-        font-size: 11px;
-        color: #64748b;
-        text-align: center;
-    }
-</style>
-</head>
-<body>
-    <div class="header">
-        <div class="header-left">
-            <img class="flag" src="https://flagcdn.com/w80/${codeLower}.png" alt="${countryName}" onerror="this.style.display='none'">
-            <div class="title-group">
-                <h1>${countryName ? countryName : "Awaiting Round Detection..."}</h1>
-                ${state ? `<div class="state">${state}</div>` : ""}
-            </div>
-        </div>
-        <div class="header-actions">
-            <span class="badge-h">[H]</span>
-            <button class="btn-close" onclick="window.parent.postMessage({type:'ADGUARDS_CLOSE_IFRAME'}, '*'); try { window.parent.focus(); } catch(_){}" title="Close guide (Press H)">✕</button>
-        </div>
-    </div>
-
-    ${countryName ? `
-        <!-- Top Meta Badges -->
-        <div class="badges">
-            <span class="badge badge-drive">🚗 Drive: ${drive}</span>
-            <span class="badge badge-domain">🌐 ${domain}</span>
-            ${continent ? `<span class="badge badge-cont">🏛️ ${continent}</span>` : ""}
-            ${phone ? `<span class="badge badge-phone">📞 ${phone}</span>` : ""}
-            ${currency ? `<span class="badge badge-curr">💰 ${currency}</span>` : ""}</div>
-
-        <!-- =================== 1. GUESS LOCATION MAP =================== -->
-        <div class="section-divider section-divider-map">🗺️ 1. Guess Location Map (Country Overview)</div>
-        ${hasCoords ? `
-            <div class="map-card" style="padding: 0; overflow: hidden; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.25);">
-                <div id="hint-map-canvas" style="width: 100%; height: 210px; background: #0f172a; position: relative;"></div>
-            </div>
-        ` : `
-            <div class="empty-clues-box" style="text-align: center; padding: 16px 12px;">
-                🧭 Awaiting round coordinates from Street View detection...
-            </div>
-        `}
-
-        <!-- =================== 2. STREET VIEW & IRIS AI CLUES =================== -->
-        <div id="section-iris-container">
-            ${renderIrisSectionContent(panoClues, countryClues, isLoading, countryName)}
-        </div>
-
-        <!-- =================== 3. GENERAL COUNTRY CLUES (GEOMASTR) =================== -->
-        <div class="section-divider section-divider-meta">📚 3. General Country Clues (Geomastr)</div>
-
-        ${alphabetImgUrl ? `
-            <div class="card">
-                <div class="card-title">🔤 LANGUAGE & ALPHABET</div>
-                <div class="card-body">Official language: <strong>${language}</strong> <span style="font-size:10.5px; color:#38bdf8;">(Click image to zoom)</span></div>
-                <div style="background: #ffffff; border-radius: 8px; padding: 8px; margin-top: 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
-                    <img class="img-alphabet img-zoomable" src="${alphabetImgUrl}" alt="${countryName} Alphabet chart" onerror="this.parentElement.style.display='none'">
-                </div>
-            </div>
-        ` : (language ? `
-            <div class="card">
-                <div class="card-title">🔤 LANGUAGE</div>
-                <div class="card-body">Official language: <strong>${language}</strong></div>
-            </div>
-        ` : "")}
-
-        ${suffixes.length > 0 ? `
-            <div class="card">
-                <div class="card-title">🏷️ COMMON STREET NAME SUFFIXES</div>
-                <div class="card-body">Typical prefixes/suffixes found on road signs:</div>
-                <div class="suffix-wrap">
-                    ${suffixes.map(s => `<span class="suffix-pill">${s}</span>`).join("")}
-                </div>
-            </div>
-        ` : ""}
-
-        ${roadLinesText ? `
-            <div class="card">
-                <div class="card-title">🛣️ ROAD LINE SYSTEM (GEOMASTR)</div>
-                <div class="card-body">${roadLinesText}</div>
-                <div class="road-sim">
-                    <div class="road-edge" style="background:${roadLinesText.toLowerCase().includes('yellow outside') ? '#facc15' : '#ffffff'};"></div>
-                    <div class="road-label">${roadLinesText}</div>
-                    <div class="road-center" style="border-left-color:${roadLinesText.toLowerCase().includes('yellow inside') ? '#facc15' : '#ffffff'};"></div>
-                    <div class="road-edge" style="background:${roadLinesText.toLowerCase().includes('yellow outside') ? '#facc15' : '#ffffff'};"></div>
-                </div>
-            </div>
-        ` : ""}
-
-        ${slug ? `
-            <!-- Authentic Bollard Photos -->
-            <div class="card">
-                <div class="card-title">🪧 AUTHENTIC BOLLARD PHOTOS</div>
-                <div class="visual-gallery">
-                    <div class="visual-card" id="geo-bollard-1">
-                        <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}.jpg" alt="${countryName} Bollard Type A" onerror="document.getElementById('geo-bollard-1').style.display='none'">
-                        <div class="card-caption">Type A 🔍</div>
-                    </div>
-                    ${bollardCount >= 2 ? `
-                        <div class="visual-card" id="geo-bollard-2">
-                            <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}2.jpg" alt="${countryName} Bollard Type B" onerror="document.getElementById('geo-bollard-2').style.display='none'">
-                            <div class="card-caption">Type B 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${bollardCount >= 3 ? `
-                        <div class="visual-card" id="geo-bollard-3">
-                            <img class="img-bollard img-zoomable" src="https://geomastr.com/assets/media/bollards/${slug}3.jpg" alt="${countryName} Bollard Type C" onerror="document.getElementById('geo-bollard-3').style.display='none'">
-                            <div class="card-caption">Type C 🔍</div>
-                        </div>
-                    ` : ""}
-                </div>
-            </div>
-
-            <!-- Authentic License Plates -->
-            <div class="card">
-                <div class="card-title">🚘 AUTHENTIC LICENSE PLATES</div>
-                <div class="visual-gallery" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
-                    <div class="visual-card" id="geo-plate-1">
-                        <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}.jpg" alt="${countryName} Standard Plate" onerror="document.getElementById('geo-plate-1').style.display='none'">
-                        <div class="card-caption">Standard 🔍</div>
-                    </div>
-                    ${plateCount >= 2 ? `
-                        <div class="visual-card" id="geo-plate-2">
-                            <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}2.jpg" alt="${countryName} Alternate Plate" onerror="document.getElementById('geo-plate-2').style.display='none'">
-                            <div class="card-caption">Alternate 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${plateCount >= 3 ? `
-                        <div class="visual-card" id="geo-plate-3">
-                            <img class="img-plate img-zoomable" src="https://geomastr.com/assets/media/licenseplates/${capSlug}3.jpg" alt="${countryName} Plate Type 3" onerror="document.getElementById('geo-plate-3').style.display='none'">
-                            <div class="card-caption">Commercial / Old 🔍</div>
-                        </div>
-                    ` : ""}
-                </div>
-            </div>
-
-            <!-- Traffic & Road Signs -->
-            <div class="card">
-                <div class="card-title">🚦 TRAFFIC & ROAD SIGNS</div>
-                <div class="visual-gallery" style="grid-template-columns: repeat(3, 1fr);">
-                    ${hasStop ? `
-                        <div class="visual-card" id="geo-sign-stop">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/stop/${slug}.svg" alt="${countryName} Stop Sign" onerror="document.getElementById('geo-sign-stop').style.display='none'">
-                            <div class="card-caption">Stop 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${hasYield ? `
-                        <div class="visual-card" id="geo-sign-yield">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/yields/${slug}_1.svg" alt="${countryName} Yield Sign" onerror="document.getElementById('geo-sign-yield').style.display='none'">
-                            <div class="card-caption">Yield 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${hasPedestrian ? `
-                        <div class="visual-card" id="geo-sign-ped">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/pedestrians/${slug}.svg" alt="${countryName} Pedestrian Crossing" onerror="document.getElementById('geo-sign-ped').style.display='none'">
-                            <div class="card-caption">Crossing 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${hasRoundabout ? `
-                        <div class="visual-card" id="geo-sign-round">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/round/${slug}.svg" alt="${countryName} Roundabout Sign" onerror="document.getElementById('geo-sign-round').style.display='none'">
-                            <div class="card-caption">Roundabout 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${hasBend ? `
-                        <div class="visual-card" id="geo-sign-bend">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/curve/${slug}.svg" alt="${countryName} Curve Sign" onerror="document.getElementById('geo-sign-bend').style.display='none'">
-                            <div class="card-caption">Curve 🔍</div>
-                        </div>
-                    ` : ""}
-                    ${hasChevron ? `
-                        <div class="visual-card" id="geo-sign-chev">
-                            <img class="img-sign img-zoomable" src="https://geomastr.com/assets/media/streetsigns/chevrons/${slug}_1.svg" alt="${countryName} Chevron Sign" onerror="document.getElementById('geo-sign-chev').style.display='none'">
-                            <div class="card-caption">Chevron 🔍</div>
-                        </div>
-                    ` : ""}
-                </div>
-            </div>
-
-            <!-- Postal & Utility Silhouette -->
-            ${(geo.po && geo.po > 0) ? `
-                <div class="card">
-                    <div class="card-title">🪵 POSTAL & UTILITY SILHOUETTE</div>
-                    <div class="visual-gallery" style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));">
-                        <div class="visual-card" id="geo-post-1">
-                            <img class="img-post img-zoomable" src="https://geomastr.com/assets/media/post/${slug}.svg" alt="${countryName} Postal Utility Pole" onerror="document.getElementById('geo-post-1').style.display='none'">
-                            <div class="card-caption">Utility Pole 🔍</div>
-                            <div class="card-subtext">National design</div>
-                        </div>
-                    </div>
-                </div>
-            ` : ""}
-
-            <!-- Common Fuel Stations -->
-            ${(geo.fs && geo.fs.length > 0) ? `
-                <div class="card">
-                    <div class="card-title">⛽ COMMON FUEL STATIONS</div>
-                    <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
-                        ${geo.fs.map(f => `<img class="img-fuel img-zoomable" src="https://geomastr.com/assets/media/companies/${f}" alt="${f}" title="${f} (Click to zoom)" onerror="this.style.display='none'">`).join("")}
-                    </div>
-                </div>
-            ` : ""}
-        ` : ""}
-
-    ` : `
-        <div style="text-align: center; padding: 36px 12px; color: #94a3b8;">
-            <div style="font-size: 32px; margin-bottom: 10px;">🧭</div>
-            <div style="font-size: 14px; font-weight: 700; color: #cbd5e1; margin-bottom: 6px;">Awaiting Round Location...</div>
-            <div style="font-size: 11.5px; color: #64748b; line-height: 1.5;">Map overview, official GeoGuessr Iris clues, and comprehensive Geomastr country visual guides will automatically load as soon as Street View coordinates are detected.</div>
-        </div>
-    `}
-
-    <div class="footer-note">
-        Press <strong style="color: #38bdf8;">H</strong> on keyboard to hide / show this guide
-    </div>
-    <!-- Lightbox Modal for zooming any Geomastr Image -->
-    <div id="geomastr-lightbox" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.88); backdrop-filter:blur(8px); z-index:99999; flex-direction:column; align-items:center; justify-content:center; padding:16px; box-sizing:border-box; cursor:zoom-out;" onclick="this.style.display='none'">
-        <div style="position:absolute; top:14px; right:18px; font-size:20px; color:#cbd5e1; cursor:pointer; font-weight:700; background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.2); width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(0,0,0,0.6);" onclick="document.getElementById('geomastr-lightbox').style.display='none'">✕</div>
-        <div style="max-width:92%; max-height:85%; display:flex; flex-direction:column; align-items:center; justify-content:center;" onclick="event.stopPropagation()">
-            <img id="lightbox-img" src="" style="max-width:100%; max-height:75vh; object-fit:contain; border-radius:10px; box-shadow:0 12px 48px rgba(0,0,0,0.9); border:1px solid rgba(56,189,248,0.4); background:#090e1a; padding:10px;">
-            <div id="lightbox-caption" style="margin-top:10px; color:#f1f5f9; font-size:12px; font-weight:600; text-align:center; text-shadow:0 2px 6px rgba(0,0,0,0.9); background:rgba(15,23,42,0.85); padding:4px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.1);"></div>
-        </div>
-    </div>
-
-    <script>
-        function openLightbox(src, caption) {
-            var lb = document.getElementById('geomastr-lightbox');
-            var img = document.getElementById('lightbox-img');
-            var cap = document.getElementById('lightbox-caption');
-            if (lb && img) {
-                img.src = src;
-                if (cap) cap.textContent = caption || '';
-                if (src.indexOf('/languages/') !== -1 || (caption && caption.toLowerCase().indexOf('alphabet') !== -1)) {
-                    img.style.background = '#ffffff';
-                    img.style.padding = '14px';
-                    img.style.borderRadius = '8px';
-                    img.style.boxShadow = '0 6px 24px rgba(0,0,0,0.6)';
-                } else {
-                    img.style.background = '#090e1a';
-                    img.style.padding = '10px';
-                    img.style.boxShadow = '0 12px 48px rgba(0,0,0,0.9)';
-                }
-                lb.style.display = 'flex';
-            }
-        }
-
-        function renderHintMap() {
-            var container = document.getElementById("hint-map-canvas");
-            if (!container) return;
-            var lat = ${coords.lat || 0};
-            var lng = ${coords.lng || 0};
-            if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return;
-
-            // 1. Coba Google Maps JS API dari window.parent (resmi, tanpa layer controls & tanpa link open in google)
+function syncTermsText() {
+    try {
+        const links = Array.from(document.querySelectorAll("a")).filter(isTermsElement);
+        links.forEach(link => {
             try {
-                if (window.parent && window.parent.google && window.parent.google.maps && window.parent.google.maps.Map) {
-                    var gm = window.parent.google.maps;
-                    var map = new gm.Map(container, {
-                        center: { lat: lat, lng: lng },
-                        zoom: 5,
-                        mapTypeControl: false,       // Hilangkan pilihan layer
-                        streetViewControl: false,    // Hilangkan street view pegman
-                        fullscreenControl: false,    // Hilangkan fullscreen
-                        zoomControl: true,           // Tombol zoom +/- tetap ada
-                        scaleControl: false,
-                        rotateControl: false,
-                        mapTypeId: 'roadmap',
-                        gestureHandling: 'cooperative'
-                    });
-                    new gm.Marker({
-                        position: { lat: lat, lng: lng },
-                        map: map,
-                        title: "${escapeHtml(countryName) || 'Round Location'}"
-                    });
-                    return;
+                if (link.hasAttribute("href")) {
+                    link.removeAttribute("href");
                 }
-            } catch (_) {}
+                link.removeAttribute("target");
+                link.removeAttribute("rel");
+                link.style.cursor = "pointer";
+                link.style.userSelect = "none";
+                link.style.webkitUserSelect = "none";
+                link.style.touchAction = "manipulation";
 
-            // 2. Fallback: Leaflet OpenStreetMap (100% bebas dari Google redirect / layer options)
-            try {
-                if (typeof L !== 'undefined') {
-                    var lMap = L.map(container, {
-                        center: [lat, lng],
-                        zoom: 5,
-                        zoomControl: true,
-                        attributionControl: false
-                    });
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(lMap);
-                    L.marker([lat, lng]).addTo(lMap);
+                const desired = dotAdded ? "Map Terms" : "Terms";
+                if (link.textContent !== desired) {
+                    link.textContent = desired;
                 }
-            } catch (_) {}
-        }
-        renderHintMap();
-        document.addEventListener('click', function(e) {
-            var t = e.target;
-            if (t && t.tagName === 'IMG' && (t.classList.contains('img-zoomable') || t.classList.contains('img-alphabet') || t.classList.contains('img-fuel') || t.closest('.visual-card'))) {
-                e.preventDefault();
-                e.stopPropagation();
-                openLightbox(t.src, t.alt || t.title || 'Geomastr Image');
-            }
-        });
-        document.addEventListener('keydown', function(e) {
-            var k = e.key ? e.key.toLowerCase() : '';
-            var c = e.code || '';
-            if (k === 'h' || c === 'KeyH' || k === 'escape' || c === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                window.parent.postMessage({ type: 'ADGUARDS_CLOSE_IFRAME' }, '*');
-                try { window.parent.focus(); } catch (_) {}
-            }
-        }, true);
-        window.addEventListener('message', function(e) {
-            if (e && e.data && e.data.type === 'ADGUARDS_UPDATE_IRIS') {
-                var container = document.getElementById('section-iris-container');
-                if (container && typeof e.data.html === 'string') {
-                    container.innerHTML = e.data.html;
-                }
-            }
-        });
-    </script>
-</body>
-</html>`;
-    }
 
-    function createOrGetPlonkitIframe() {
-        let iframe = document.getElementById("__adguards_plonkit_iframe");
-        if (iframe) return iframe;
-
-        iframe = document.createElement("iframe");
-        iframe.id = "__adguards_plonkit_iframe";
-        iframe.style.position = "fixed";
-        iframe.style.top = "60px";
-        iframe.style.left = "16px";
-        iframe.style.width = "390px";
-        iframe.style.maxWidth = "calc(100vw - 32px)";
-        iframe.style.height = "calc(100vh - 85px)";
-        iframe.style.zIndex = "2147483640";
-        iframe.style.border = "1px solid rgba(56, 189, 248, 0.4)";
-        iframe.style.borderRadius = "14px";
-        iframe.style.boxShadow = "0 16px 48px rgba(0, 0, 0, 0.85), 0 0 20px rgba(56, 189, 248, 0.15)";
-        iframe.style.background = "#090e1a";
-        iframe.style.display = "none";
-        iframe.style.userSelect = "none";
-
-        (document.body || document.documentElement).appendChild(iframe);
-        plonkitIframeEl = iframe;
-        return iframe;
-    }
-
-    function updatePlonkitUI() {
-        const iframe = createOrGetPlonkitIframe();
-        if (!plonkitActive) {
-            iframe.style.display = "none";
-            return;
-        }
-
-        iframe.style.display = "block";
-
-        const country = globalPlace.country || "";
-        const countryCode = (globalPlace.countryCode || "").toUpperCase();
-        const state = globalPlace.state || "";
-        const coords = currentRoundCoords || globalCoordinates || { lat: 0, lng: 0 };
-
-        const panoClues = cachedGeoGuessrClues.panoClues || [];
-        const countryClues = cachedGeoGuessrClues.countryClues || [];
-        const isLoading = cachedGeoGuessrClues.loading;
-
-        // Jika ronde masih sama (roundId sama) dan iframe sudah memiliki srcdoc, JANGAN RELOAD PETA!
-        if (renderedRoundId === roundId && iframe.srcdoc) {
-            // Hanya update Iris AI Clues (Bagian 2) via postMessage & direct DOM fallback
-            const irisHtml = renderIrisSectionContent(panoClues, countryClues, isLoading, country);
-            try {
-                if (iframe.contentWindow) {
-                    iframe.contentWindow.postMessage({ type: "ADGUARDS_UPDATE_IRIS", html: irisHtml }, "*");
-                }
-                const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
-                const irisContainer = doc ? doc.getElementById("section-iris-container") : null;
-                if (irisContainer) {
-                    irisContainer.innerHTML = irisHtml;
-                }
-            } catch (_) {}
-            return;
-        }
-
-        // Ronde baru pertama kali dimuat: render seluruh dokumen termasuk Google Maps overview
-        renderedRoundId = roundId;
-        lastRenderedRoundCoords = { lat: coords.lat, lng: coords.lng };
-        try {
-            const html = generatePlonkitRewrittenHtml(countryCode, country, state, coords);
-            iframe.srcdoc = html;
-        } catch (err) {
-            console.error("[AdGuards] Error generating hint HTML:", err);
-        }
-    }
-
-    function blurIframeAndFocusGame() {
-        try {
-            if (plonkitIframeEl) plonkitIframeEl.blur();
-            window.focus();
-            if (document.body) {
-                if (document.body.tabIndex < 0) document.body.tabIndex = -1;
-                document.body.focus();
-            }
-            const gameCanvas = document.querySelector('canvas.widget-scene-canvas, canvas, div[data-qa="guess-map"]');
-            if (gameCanvas && typeof gameCanvas.focus === "function") {
-                if (gameCanvas.tabIndex < 0) gameCanvas.tabIndex = -1;
-                gameCanvas.focus();
-            }
-        } catch (_) {}
-    }
-
-    function togglePlonkitPanel() {
-        const now = Date.now();
-        if (now - lastHToggle < 120) return;
-        lastHToggle = now;
-
-        plonkitActive = !plonkitActive;
-        try { localStorage.setItem("plonkitActive", JSON.stringify(plonkitActive)); } catch (_) {}
-        if (plonkitActive && typeof triggerCluesFetch === "function") {
-            triggerCluesFetch();
-        }
-        updatePlonkitUI();
-
-        if (!plonkitActive) {
-            blurIframeAndFocusGame();
-        }
-    }
-
-    window.addEventListener("message", (e) => {
-        if (e && e.data && e.data.type === "ADGUARDS_CLOSE_IFRAME") {
-            plonkitActive = false;
-            try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
-            updatePlonkitUI();
-            blurIframeAndFocusGame();
-        }
-    });
-
-    
-
-
-    // =================== Keyboard Listener (Shortcut G & H) ===================
-    function handleKeyDown(e) {
-        try {
-            const activeTag = document.activeElement ? document.activeElement.tagName : "";
-            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || (document.activeElement && document.activeElement.isContentEditable)) {
-                return;
-            }
-            const key = e.key ? e.key.toLowerCase() : "";
-            const code = e.code || "";
-            if (key === "h" || code === "KeyH") {
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
-                togglePlonkitPanel();
-                return;
-            } else if (key === "g" || code === "KeyG") {
-                dotAdded = !dotAdded;
-                syncTermsText();
-                if (!dotAdded) {
-                    clearMarker();
-                }
-            }
-        } catch (_) {}
-    }
-
-    // Register cleanup function
-    window.__ADGUARDS_CLEANUP__ = function() {
-        try {
-            if (currentPovAnimId) {
-                cancelAnimationFrame(currentPovAnimId);
-                currentPovAnimId = null;
-            }
-            window.removeEventListener("keydown", handleKeyDown, true);
-            document.removeEventListener("keydown", handleKeyDown, true);
-            window.removeEventListener("wheel", handleWheelZoom, true);
-            document.removeEventListener("wheel", handleWheelZoom, true);
-            window.removeEventListener("mousedown", handleMouseDown, true);
-            document.removeEventListener("mousedown", handleMouseDown, true);
-            window.removeEventListener("mouseup", handleMouseUp, true);
-            document.removeEventListener("mouseup", handleMouseUp, true);
-            stopCurrentAction();
-        } catch (_) {}
-    };
-
-    // Attach global listeners with capture: true
-    window.removeEventListener("keydown", handleKeyDown, true);
-    document.removeEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-
-    window.removeEventListener("wheel", handleWheelZoom, true);
-    document.removeEventListener("wheel", handleWheelZoom, true);
-    window.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
-    document.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
-
-    window.removeEventListener("mousedown", handleMouseDown, true);
-    document.removeEventListener("mousedown", handleMouseDown, true);
-    window.addEventListener("mousedown", handleMouseDown, true);
-    document.addEventListener("mousedown", handleMouseDown, true);
-
-    window.removeEventListener("mouseup", handleMouseUp, true);
-    document.removeEventListener("mouseup", handleMouseUp, true);
-    window.addEventListener("mouseup", handleMouseUp, true);
-    document.addEventListener("mouseup", handleMouseUp, true);
-
-    window.addEventListener("blur", () => {
-        isMiddleMouseDown = false;
-        isRightMouseDown = false;
-    }, true);
-
-    // =================== Party Modal Auto-Dismiss ===================
-    function dismissPartyModalIfNeeded() {
-        try {
-            const dialogs = document.querySelectorAll("[role='dialog'], [class*='modal'], [class*='dialog'], div[class*='overlay']");
-            for (const dialog of dialogs) {
-                const text = dialog.textContent || "";
-                if (text.includes("Leave the party page") || text.includes("Leave the party?")) {
-                    const buttons = dialog.querySelectorAll("button");
-                    for (const btn of buttons) {
-                        const btnText = btn.textContent.trim().toLowerCase();
-                        if (btnText.includes("cancel") || btnText.includes("stay") || btnText.includes("no") || btnText.includes("batal") || btnText.includes("close")) {
-                            btn.click();
-                            break;
+                if (!link.__adguards_bound) {
+                    link.__adguards_bound = true;
+                    const toggleHandler = function(e) {
+                        if (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
                         }
+                        dotAdded = !dotAdded;
+                        syncTermsText();
+                        if (!dotAdded) {
+                            isRightMouseDown = false;
+                            clearMarker();
+                        }
+                        return false;
+                    };
+                    link.addEventListener("click", toggleHandler, true);
+                    link.addEventListener("touchend", toggleHandler, true);
+                    link.addEventListener("pointerdown", toggleHandler, true);
+                    link.onclick = toggleHandler;
+                }
+            } catch (_) {}
+        });
+    } catch (_) {}
+}
+
+function handleTermsTrigger(e) {
+    try {
+        if (isTermsElement(e.target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+
+            dotAdded = !dotAdded;
+            syncTermsText();
+
+            if (!dotAdded) {
+                isRightMouseDown = false;
+                clearMarker();
+            }
+            return false;
+        }
+    } catch (_) {}
+}
+
+window.addEventListener("click", handleTermsTrigger, true);
+window.addEventListener("touchend", handleTermsTrigger, true);
+window.addEventListener("pointerdown", handleTermsTrigger, true);
+document.addEventListener("click", handleTermsTrigger, true);
+document.addEventListener("touchend", handleTermsTrigger, true);
+document.addEventListener("pointerdown", handleTermsTrigger, true);
+
+// =================== Keyboard Listener (Shortcut G) ===================
+document.addEventListener("keydown", (e) => {
+    try {
+        const key = e.key ? e.key.toLowerCase() : "";
+        if (key === "g") {
+            dotAdded = true;
+            syncTermsText();
+        } else if (key !== " " && !isRightMouseDown) {
+            dotAdded = false;
+            syncTermsText();
+            clearMarker();
+        }
+    } catch (_) {}
+});
+
+// =================== Party Modal Auto-Dismiss ===================
+function dismissPartyModalIfNeeded() {
+    try {
+        const dialogs = document.querySelectorAll("[role='dialog'], [class*='modal'], [class*='dialog'], div[class*='overlay']");
+        for (const dialog of dialogs) {
+            const text = dialog.textContent || "";
+            if (text.includes("Leave the party page") || text.includes("Leave the party?")) {
+                const buttons = dialog.querySelectorAll("button");
+                for (const btn of buttons) {
+                    const btnText = btn.textContent.trim().toLowerCase();
+                    if (btnText.includes("cancel") || btnText.includes("stay") || btnText.includes("no") || btnText.includes("batal") || btnText.includes("close")) {
+                        btn.click();
+                        break;
                     }
                 }
             }
-        } catch (_) {}
-    }
+        }
+    } catch (_) {}
+}
 
-    // =================== Background Interval (Bulletproof) ===================
-    setInterval(() => {
-        try {
-            hookGoogleMapConstructor();
-            hookGoogleMapPrototype();
-            hookStreetViewPanorama();
-            checkPanoramaFailure();
-            if (!isMapValid(foundMap)) {
-                requestScanForMap(100);
-            }
-            syncTermsText();
-            dismissPartyModalIfNeeded();
-        } catch (_) {}
-    }, 1000);
-})();
+// =================== Background Interval (Bulletproof) ===================
+setInterval(() => {
+    try {
+        hookGoogleMapConstructor();
+        hookGoogleMapPrototype();
+        checkPanoramaFailure();
+        if (!isMapValid(foundMap)) {
+            requestScanForMap(100);
+        }
+        syncTermsText();
+        dismissPartyModalIfNeeded();
+    } catch (_) {}
+}, 1000);
