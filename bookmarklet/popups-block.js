@@ -2139,7 +2139,7 @@
         iframe.id = "__adguards_plonkit_iframe";
         iframe.style.position = "fixed";
         iframe.style.top = "60px";
-        iframe.style.right = "16px";
+        iframe.style.left = "16px";
         iframe.style.width = "380px";
         iframe.style.maxWidth = "calc(100vw - 32px)";
         iframe.style.height = "calc(100vh - 85px)";

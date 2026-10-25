@@ -48,7 +48,7 @@ Seluruh kode tertanam langsung di URL bookmarklet. Tidak memerlukan koneksi ke G
    - **Android & PC**:
      - **Klik / Ketuk Teks `Terms`**: Mengaktifkan / menonaktifkan fitur. Menimpa aksi default Google Maps agar tidak membuka tab baru. Teks berganti menjadi `Map Terms`.
      - **Shortcut `G`**: Menampilkan titik koordinat target (menimpa default browser/game). Tahan untuk melihat titik (gaya keyboard PC), atau ketuk cepat untuk toggle nyala/mati (gaya keyboard Android).
-     - **Shortcut `H`**: Mengaktifkan / menonaktifkan **Plonkit Clue Assistant (HUD)**. Mendeteksi negara ronde saat ini secara otomatis (misal Denmark &rarr; `plonkit.net/denmark`) dan menyediakan tombol jendela pendamping (pop-out companion window) yang otomatis sync setiap pergantian ronde.
+     - **Shortcut `H`**: Mengaktifkan / menonaktifkan **Iframe Panduan Plonkit di Sisi Kiri Layar**. Menulis ulang HTML & visual clue negara secara dinamis tanpa menghalangi map canvas tebakan di kanan bawah.
    - **PC Desktop (Mouse)**:
      - **Tahan Klik Kanan**: Menampilkan titik pin biru tepat di lokasi target koordinat ronde. Lepas untuk menghilangkan.
      - **Klik Tengah Mouse**: Melakukan *human-like pan & gradual zoom* ke target lokasi.
