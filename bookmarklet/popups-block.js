@@ -9,15 +9,9 @@
 (function () {
     "use strict";
 
-    // Jika bookmarklet diklik ulang oleh user (misal setelah panorama gagal, map desync, atau ronde baru error):
-    // Aktifkan mekanisme REVIVE / RE-SYNC instan tanpa reload browser!
-    if (window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__) {
-        try {
-            if (typeof window.__ADGUARDS_REVIVE__ === "function") {
-                window.__ADGUARDS_REVIVE__();
-            }
-        } catch (_) {}
-        return;
+    // Bersihkan listener lama jika script dijalankan / di-update ulang tanpa reload tab
+    if (window.__ADGUARDS_CLEANUP__) {
+        try { window.__ADGUARDS_CLEANUP__(); } catch (_) {}
     }
     window.__ADGUARDS_POPUPS_BLOCK_ACTIVE__ = true;
 
@@ -110,10 +104,11 @@
     let currentGameId = ""; // Menyimpan ID game untuk reset ronde saat mulai game baru
     let foundMap = null;
     let hint = "";
-    let dotAdded = false;
+    let dotAdded = true;
     let currentMarker = null;
     let gMarkerActive = false;
     let isRightMouseDown = false;
+    let isMiddleMouseDown = false;
     let currentAttachedDiv = null;
     let isScanning = false;
     let scanTimeout = null;
@@ -186,7 +181,7 @@
             const countryPattern = /"[A-Z]{2}"/g;
             const statePattern = /"([^"]+?)"\s*,\s*"en"\s*\](?!\s*,)/;
 
-            const match = interceptedResult.match(pattern)?.[0];
+            const _pm = interceptedResult.match(pattern); const match = _pm ? _pm[0] : null;
             if (!match) return;
 
             const [lat, lng] = match.split(",").map(Number);
@@ -229,7 +224,7 @@
                 lastRenderedRoundCoords = null;
             }
 
-            const countryMatch = interceptedResult.match(countryPattern)?.[0];
+            const _cm = interceptedResult.match(countryPattern); const countryMatch = _cm ? _cm[0] : null;
             if (countryMatch) {
                 const code = countryMatch.replace(/"/g, "");
                 globalPlace.countryCode = code;
@@ -243,7 +238,7 @@
                 globalPlace.countryCode = "";
             }
 
-            const stateMatch = interceptedResult.match(statePattern)?.[1]?.trim();
+            const _sm = interceptedResult.match(statePattern); const stateMatch = (_sm && _sm[1]) ? _sm[1].trim() : "";
             if (stateMatch) {
                 globalPlace.state = stateMatch;
             } else if (isNewRound) {
@@ -311,7 +306,7 @@
         window.fetch = async function (...args) {
             const response = await originalFetch.apply(this, args);
             try {
-                const url = typeof args[0] === "string" ? args[0] : (args[0]?.url || "");
+                const url = typeof args[0] === "string" ? args[0] : ((args[0] && args[0].url) || "");
                 if (
                     url.includes("MapsJsInternalService/GetMetadata") ||
                     url.includes("MapsJsInternalService/SingleImageSearch") ||
@@ -368,34 +363,41 @@
                 const proto = google.maps.Map.prototype;
                 if (!proto.__adguards_proto_hooked) {
                     proto.__adguards_proto_hooked = true;
-                    const origSetCenter = proto.setCenter;
-                    proto.setCenter = function (...args) {
+                    function checkAndSetFoundMap(instance) {
                         try {
-                            if (isMapValid(this) && foundMap !== this) {
-                                foundMap = this;
+                            if (isMapValid(instance) && foundMap !== instance) {
+                                const div = instance.getDiv();
+                                if (div && (div.classList.contains("widget-scene-canvas") || div.closest(".widget-scene"))) {
+                                    return;
+                                }
+                                foundMap = instance;
                                 attachMapListeners();
                             }
                         } catch (_) {}
+                    }
+                    const origGetCenter = proto.getCenter;
+                    proto.getCenter = function (...args) {
+                        checkAndSetFoundMap(this);
+                        return origGetCenter.apply(this, args);
+                    };
+                    const origGetZoom = proto.getZoom;
+                    proto.getZoom = function (...args) {
+                        checkAndSetFoundMap(this);
+                        return origGetZoom.apply(this, args);
+                    };
+                    const origSetCenter = proto.setCenter;
+                    proto.setCenter = function (...args) {
+                        checkAndSetFoundMap(this);
                         return origSetCenter.apply(this, args);
                     };
                     const origPanTo = proto.panTo;
                     proto.panTo = function (...args) {
-                        try {
-                            if (isMapValid(this) && foundMap !== this) {
-                                foundMap = this;
-                                attachMapListeners();
-                            }
-                        } catch (_) {}
+                        checkAndSetFoundMap(this);
                         return origPanTo.apply(this, args);
                     };
                     const origSetZoom = proto.setZoom;
                     proto.setZoom = function (...args) {
-                        try {
-                            if (isMapValid(this) && foundMap !== this) {
-                                foundMap = this;
-                                attachMapListeners();
-                            }
-                        } catch (_) {}
+                        checkAndSetFoundMap(this);
                         return origSetZoom.apply(this, args);
                     };
                 }
@@ -486,9 +488,6 @@
         try {
             const div = map.getDiv();
             if (!div || !document.body || !document.body.contains(div) || div.isConnected === false) return false;
-            if (div.offsetWidth === 0 && div.offsetHeight === 0 && div.getClientRects().length === 0) {
-                return false;
-            }
             const center = map.getCenter();
             return !!(center && typeof center.lat === "function" && !isNaN(center.lat()));
         } catch (_) {
@@ -497,10 +496,37 @@
     }
 
     function findMapInFiber(fiber, depth = 0) {
-        if (!fiber || depth > 35) return null;
+        if (!fiber || depth > 45) return null;
         try {
+            // 1. Check memoizedProps
             const props = fiber.memoizedProps;
-            if (props?.map && isGoogleMap(props.map) && isMapValid(props.map)) return props.map;
+            if (props) {
+                if (isGoogleMap(props.map) && isMapValid(props.map)) return props.map;
+                for (const k in props) {
+                    try {
+                        if (isGoogleMap(props[k]) && isMapValid(props[k])) return props[k];
+                    } catch (_) {}
+                }
+            }
+            // 2. Check memoizedState (hooks: useState, useRef)
+            let hook = fiber.memoizedState;
+            while (hook) {
+                try {
+                    if (isGoogleMap(hook.memoizedState) && isMapValid(hook.memoizedState)) return hook.memoizedState;
+                    if (hook.memoizedState && typeof hook.memoizedState === "object") {
+                        if (isGoogleMap(hook.memoizedState.current) && isMapValid(hook.memoizedState.current)) return hook.memoizedState.current;
+                        if (isGoogleMap(hook.memoizedState.map) && isMapValid(hook.memoizedState.map)) return hook.memoizedState.map;
+                    }
+                } catch (_) {}
+                hook = hook.next;
+            }
+            // 3. Check stateNode
+            if (fiber.stateNode) {
+                try {
+                    if (isGoogleMap(fiber.stateNode.map) && isMapValid(fiber.stateNode.map)) return fiber.stateNode.map;
+                    if (isGoogleMap(fiber.stateNode._map) && isMapValid(fiber.stateNode._map)) return fiber.stateNode._map;
+                } catch (_) {}
+            }
             return findMapInFiber(fiber.child, depth + 1) || findMapInFiber(fiber.sibling, depth + 1);
         } catch (_) {
             return null;
@@ -526,28 +552,70 @@
         isScanning = true;
 
         try {
-            // 1. Cek container guess-map potensial terlebih dahulu (cepat & tidak membebani CPU)
+            // 0. Cek .gm-style container langsung pada guess map
+            const gmStyleEl = document.querySelector('div[data-qa="guess-map"] .gm-style, div[class*="guess-map"] .gm-style, div[class*="styles_map__"] .gm-style');
+            if (gmStyleEl && gmStyleEl.parentElement) {
+                const mapDiv = gmStyleEl.parentElement;
+                const fKey = Object.keys(mapDiv).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+                if (fKey) {
+                    const m = findMapInFiber(mapDiv[fKey]);
+                    if (isMapValid(m)) {
+                        foundMap = m;
+                        attachMapListeners();
+                        isScanning = false;
+                        return;
+                    }
+                }
+            }
+
+            // 1. Cek window object secara langsung
+            for (const wk in window) {
+                try {
+                    const wVal = window[wk];
+                    if (isGoogleMap(wVal) && isMapValid(wVal)) {
+                        foundMap = wVal;
+                        attachMapListeners();
+                        isScanning = false;
+                        return;
+                    }
+                } catch (_) {}
+            }
+
+            // 2. Cek container guess-map potensial dan anak-anaknya
             const candidates = document.querySelectorAll(
                 'div[data-qa="guess-map"], div[class*="guess-map"], div[class*="styles_map__"], div[class*="map-container"], div.widget-scene-canvas'
             );
             for (const c of candidates) {
-                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
-                if (!fiberKey) continue;
-                const map = findMapInFiber(c[fiberKey]);
-                if (isMapValid(map)) {
-                    foundMap = map;
-                    attachMapListeners();
-                    isScanning = false;
-                    return;
+                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+                if (fiberKey) {
+                    const map = findMapInFiber(c[fiberKey]);
+                    if (isMapValid(map)) {
+                        foundMap = map;
+                        attachMapListeners();
+                        isScanning = false;
+                        return;
+                    }
+                }
+                const subElements = c.querySelectorAll("*");
+                for (const sub of subElements) {
+                    const subFiber = Object.keys(sub).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+                    if (!subFiber) continue;
+                    const map = findMapInFiber(sub[subFiber]);
+                    if (isMapValid(map)) {
+                        foundMap = map;
+                        attachMapListeners();
+                        isScanning = false;
+                        return;
+                    }
                 }
             }
 
-            // 2. Fallback: Cari di kontainer umum dengan batas agar tidak membekukan tab saat error
+            // 3. Fallback: Cari di kontainer umum
             const containers = document.querySelectorAll("div");
             const maxCheck = Math.min(containers.length, 120);
             for (let i = 0; i < maxCheck; i++) {
                 const c = containers[i];
-                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$"));
+                const fiberKey = Object.keys(c).find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
                 if (!fiberKey) continue;
                 const map = findMapInFiber(c[fiberKey]);
                 if (isMapValid(map)) {
@@ -810,7 +878,7 @@
     // =================== Wheel Zoom Handler ===================
     function handleWheelZoom(e) {
         try {
-            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4);
+            const isMiddleHeld = (e.buttons === 4) || ((e.buttons & 4) === 4) || isMiddleMouseDown;
             if (!isMiddleHeld) return;
 
             if (!isMapValid(foundMap)) {
@@ -832,6 +900,8 @@
                 if (typeof foundMap.setZoom === "function") foundMap.setZoom(newZoom);
                 if (typeof google !== "undefined" && google.maps && google.maps.LatLng) {
                     foundMap.panTo(new google.maps.LatLng(lat, lng));
+                } else if (typeof foundMap.panTo === "function") {
+                    foundMap.panTo({ lat: lat, lng: lng });
                 }
             }
         } catch (_) {}
@@ -841,22 +911,15 @@
     function handleMouseDown(e) {
         try {
             if (e.button === 1) {
-                // Prevent Chrome middle-click autoscroll cursor
+                // Prevent Chrome middle-click autoscroll cursor and record middle button pressed
+                isMiddleMouseDown = true;
                 e.preventDefault();
+                return;
             }
 
             if (!isMapValid(foundMap)) {
                 scanForMap();
                 if (!isMapValid(foundMap)) return;
-            }
-
-            if (e.button === 1 && dotAdded) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (globalCoordinates.lat && globalCoordinates.lng) {
-                    humanPanAndZoom(foundMap, globalCoordinates.lat, globalCoordinates.lng);
-                }
-                return;
             }
 
             if (e.button === 2 && dotAdded) {
@@ -872,6 +935,9 @@
 
     function handleMouseUp(e) {
         try {
+            if (e.button === 1) {
+                isMiddleMouseDown = false;
+            }
             if (e.button === 2) {
                 isRightMouseDown = false;
                 clearMarker();
@@ -925,7 +991,7 @@
                 return;
             }
 
-            if (typeof google !== "undefined" && google.maps?.marker?.AdvancedMarkerElement) {
+            if (typeof google !== "undefined" && google.maps && google.maps.marker && google.maps.marker.AdvancedMarkerElement) {
                 const pinElement = document.createElement("div");
                 pinElement.style.width = "4px";
                 pinElement.style.height = "4px";
@@ -1135,7 +1201,7 @@
         return fetch("/api/v4/game-analysis/zoomed-image/" + encodeURIComponent(pano) + "?" + query, { credentials: "include" })
             .then(res => res.ok ? res.json() : null)
             .then(data => {
-                const img = data?.payload?.image || data?.image || null;
+                const img = (data && data.payload && data.payload.image) || (data && data.image) || null;
                 if (img) {
                     clue.image = img;
                 }
@@ -1206,9 +1272,9 @@
                                 const scoutRes = await fetch("/api/v4/game-analysis/scout-clues/" + encodeURIComponent(pano), { credentials: "include" });
                                 if (scoutRes.ok) {
                                     const scoutData = await scoutRes.json();
-                                    const payload = scoutData?.payload || scoutData;
+                                    const payload = (scoutData && scoutData.payload) || scoutData;
                                     if (Array.isArray(payload)) list = payload;
-                                    else if (Array.isArray(payload?.clues)) list = payload.clues;
+                                    else if (payload && Array.isArray(payload.clues)) list = payload.clues;
                                 }
                             } catch (_) {}
                         }
@@ -2409,9 +2475,25 @@
         }
     }
 
+    function blurIframeAndFocusGame() {
+        try {
+            if (plonkitIframeEl) plonkitIframeEl.blur();
+            window.focus();
+            if (document.body) {
+                if (document.body.tabIndex < 0) document.body.tabIndex = -1;
+                document.body.focus();
+            }
+            const gameCanvas = document.querySelector('canvas.widget-scene-canvas, canvas, div[data-qa="guess-map"]');
+            if (gameCanvas && typeof gameCanvas.focus === "function") {
+                if (gameCanvas.tabIndex < 0) gameCanvas.tabIndex = -1;
+                gameCanvas.focus();
+            }
+        } catch (_) {}
+    }
+
     function togglePlonkitPanel() {
         const now = Date.now();
-        if (now - lastHToggle < 60) return;
+        if (now - lastHToggle < 120) return;
         lastHToggle = now;
 
         plonkitActive = !plonkitActive;
@@ -2422,12 +2504,7 @@
         updatePlonkitUI();
 
         if (!plonkitActive) {
-            setTimeout(() => {
-                try {
-                    window.focus();
-                    if (document.body) document.body.focus();
-                } catch (_) {}
-            }, 10);
+            blurIframeAndFocusGame();
         }
     }
 
@@ -2436,7 +2513,7 @@
             plonkitActive = false;
             try { localStorage.setItem("plonkitActive", "false"); } catch (_) {}
             updatePlonkitUI();
-            try { window.focus(); if (document.body) document.body.focus(); } catch (_) {}
+            blurIframeAndFocusGame();
         }
     });
 
@@ -2447,7 +2524,7 @@
     function handleKeyDown(e) {
         try {
             const activeTag = document.activeElement ? document.activeElement.tagName : "";
-            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || document.activeElement?.isContentEditable) {
+            if (activeTag === "INPUT" || activeTag === "TEXTAREA" || (document.activeElement && document.activeElement.isContentEditable)) {
                 return;
             }
             const key = e.key ? e.key.toLowerCase() : "";
@@ -2459,20 +2536,55 @@
                 togglePlonkitPanel();
                 return;
             } else if (key === "g" || code === "KeyG") {
-                dotAdded = true;
+                dotAdded = !dotAdded;
                 syncTermsText();
-            } else if (key !== " " && !isRightMouseDown && key !== "control" && key !== "shift" && key !== "alt") {
-                dotAdded = false;
-                syncTermsText();
-                clearMarker();
+                if (!dotAdded) {
+                    clearMarker();
+                }
             }
         } catch (_) {}
     }
 
+    // Register cleanup function
+    window.__ADGUARDS_CLEANUP__ = function() {
+        try {
+            window.removeEventListener("keydown", handleKeyDown, true);
+            document.removeEventListener("keydown", handleKeyDown, true);
+            window.removeEventListener("wheel", handleWheelZoom, true);
+            document.removeEventListener("wheel", handleWheelZoom, true);
+            window.removeEventListener("mousedown", handleMouseDown, true);
+            document.removeEventListener("mousedown", handleMouseDown, true);
+            window.removeEventListener("mouseup", handleMouseUp, true);
+            document.removeEventListener("mouseup", handleMouseUp, true);
+            stopCurrentAction();
+        } catch (_) {}
+    };
+
+    // Attach global listeners with capture: true
     window.removeEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keydown", handleKeyDown, true);
     document.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("keydown", handleKeyDown, true);
+
+    window.removeEventListener("wheel", handleWheelZoom, true);
+    document.removeEventListener("wheel", handleWheelZoom, true);
+    window.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
+    document.addEventListener("wheel", handleWheelZoom, { capture: true, passive: false });
+
+    window.removeEventListener("mousedown", handleMouseDown, true);
+    document.removeEventListener("mousedown", handleMouseDown, true);
+    window.addEventListener("mousedown", handleMouseDown, true);
+    document.addEventListener("mousedown", handleMouseDown, true);
+
+    window.removeEventListener("mouseup", handleMouseUp, true);
+    document.removeEventListener("mouseup", handleMouseUp, true);
+    window.addEventListener("mouseup", handleMouseUp, true);
+    document.addEventListener("mouseup", handleMouseUp, true);
+
+    window.addEventListener("blur", () => {
+        isMiddleMouseDown = false;
+        isRightMouseDown = false;
+    }, true);
 
     // =================== Party Modal Auto-Dismiss ===================
     function dismissPartyModalIfNeeded() {
