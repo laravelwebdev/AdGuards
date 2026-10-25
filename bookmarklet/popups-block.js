@@ -664,30 +664,164 @@
         return { dLat, dLng };
     }
 
+    function latToMercatorY(lat) {
+        const sinLat = Math.sin((lat * Math.PI) / 180);
+        const clampedSin = Math.max(-0.9999, Math.min(0.9999, sinLat));
+        return 0.5 - Math.log((1 + clampedSin) / (1 - clampedSin)) / (4 * Math.PI);
+    }
+
+    function isPointInBounds(map, targetLat, targetLng) {
+        try {
+            if (!isMapValid(map)) return false;
+
+            // 1. Cek Google Maps native LatLngBounds jika tersedia
+            const bounds = map.getBounds();
+            if (bounds) {
+                if (typeof google !== "undefined" && google.maps && google.maps.LatLng && typeof bounds.contains === "function") {
+                    try {
+                        if (bounds.contains(new google.maps.LatLng(targetLat, targetLng))) {
+                            return true;
+                        }
+                    } catch (_) {}
+                }
+                if (typeof bounds.getNorthEast === "function" && typeof bounds.getSouthWest === "function") {
+                    const ne = bounds.getNorthEast();
+                    const sw = bounds.getSouthWest();
+                    if (ne && sw) {
+                        const neLat = ne.lat();
+                        const neLng = ne.lng();
+                        const swLat = sw.lat();
+                        const swLng = sw.lng();
+                        const latOk = targetLat >= swLat && targetLat <= neLat;
+                        const lngOk = (swLng <= neLng)
+                            ? (targetLng >= swLng && targetLng <= neLng)
+                            : (targetLng >= swLng || targetLng <= neLng);
+                        if (latOk && lngOk) return true;
+                    }
+                }
+            }
+
+            // 2. Fallback perhitungan Mercator proyeksi terhadap ukuran canvas peta
+            const center = map.getCenter();
+            if (!center || typeof center.lat !== "function") return false;
+            const currentZoom = map.getZoom();
+            if (currentZoom === undefined || currentZoom === null) return false;
+
+            const div = map.getDiv();
+            const width = (div && div.offsetWidth > 0) ? div.offsetWidth : (window.innerWidth || 800);
+            const height = (div && div.offsetHeight > 0) ? div.offsetHeight : (window.innerHeight || 600);
+
+            const cLat = center.lat();
+            const cLng = center.lng();
+            const scale = 256 * Math.pow(2, currentZoom);
+
+            const dLng = getShortestLngDiff(targetLng, cLng);
+            const pixelDistX = Math.abs((dLng / 360) * scale);
+
+            const centerMercY = latToMercatorY(cLat);
+            const targetMercY = latToMercatorY(targetLat);
+            const pixelDistY = Math.abs((targetMercY - centerMercY) * scale);
+
+            // Beri margin keamanan 92% agar titik benar-benar berada di dalam layar (tidak terpotong di tepi canvas)
+            const maxDistX = (width / 2) * 0.92;
+            const maxDistY = (height / 2) * 0.92;
+
+            return pixelDistX <= maxDistX && pixelDistY <= maxDistY;
+        } catch (_) {
+            return false;
+        }
+    }
+
     function humanPanAndZoom(map, targetLat, targetLng) {
         try {
-            if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng)) return;
+            if (!isMapValid(map) || isNaN(targetLat) || isNaN(targetLng) || (targetLat === 0 && targetLng === 0)) return;
 
             stopCurrentAction();
 
             const startCenter = map.getCenter();
             if (!startCenter || typeof startCenter.lat !== "function") return;
 
+            const startZoom = map.getZoom();
+            const targetZoom = Math.min(16, Math.max(14, startZoom + 2));
+
+            // Jika titik target di luar bound canvas map:
+            // Zoom out bertahap sampai masuk bound terlebih dahulu, baru zoom in lagi!
+            if (!isPointInBounds(map, targetLat, targetLng)) {
+                stepZoomOutUntilInBounds(map, targetLat, targetLng, targetZoom);
+            } else {
+                panAndZoomIn(map, targetLat, targetLng, targetZoom);
+            }
+        } catch (_) {
+            stopCurrentAction();
+        }
+    }
+
+    function stepZoomOutUntilInBounds(map, targetLat, targetLng, targetZoom) {
+        try {
+            if (!isMapValid(map)) {
+                stopCurrentAction();
+                return;
+            }
+
+            const currentZ = map.getZoom();
+
+            // Berhenti zoom out jika titik sudah masuk ke bound canvas ATAU sudah mencapai batas minimal zoom (level 2)
+            if (isPointInBounds(map, targetLat, targetLng) || currentZ <= 2) {
+                const humanViewPause = 240 + Math.floor(Math.random() * 80);
+                currentZoomTimerId = setTimeout(() => {
+                    panAndZoomIn(map, targetLat, targetLng, targetZoom);
+                }, humanViewPause);
+                return;
+            }
+
+            // Lakukan 1 level zoom out
+            const nextZ = Math.max(2, currentZ - 1);
+            map.setZoom(nextZ);
+
+            // Geser center secara halus ke arah target saat zoom out (drift)
+            const currentCenter = map.getCenter();
+            if (currentCenter && typeof currentCenter.lat === "function") {
+                const cLat = currentCenter.lat();
+                const cLng = currentCenter.lng();
+                const drift = 0.22 + Math.random() * 0.08;
+                const dLng = getShortestLngDiff(targetLng, cLng);
+                const nextLat = cLat + (targetLat - cLat) * drift;
+                const nextLng = cLng + dLng * drift;
+                if (typeof google !== "undefined" && google.maps) {
+                    map.setCenter(new google.maps.LatLng(nextLat, nextLng));
+                }
+            }
+
+            // Jeda natural saat scroll wheel zoom out
+            const zoomOutDelay = 150 + Math.floor(Math.random() * 50);
+            currentZoomTimerId = setTimeout(() => {
+                stepZoomOutUntilInBounds(map, targetLat, targetLng, targetZoom);
+            }, zoomOutDelay);
+        } catch (_) {
+            stopCurrentAction();
+        }
+    }
+
+    function panAndZoomIn(map, targetLat, targetLng, targetZoom) {
+        try {
+            if (!isMapValid(map)) {
+                stopCurrentAction();
+                return;
+            }
+
+            const startCenter = map.getCenter();
+            if (!startCenter || typeof startCenter.lat !== "function") return;
+
             const startLat = startCenter.lat();
             const startLng = startCenter.lng();
-            const startZoom = map.getZoom();
+            const currentZoom = map.getZoom();
 
             const distanceMeters = getDistanceMeters(startLat, startLng, targetLat, targetLng);
 
-            let targetZoom = Math.min(17, startZoom + 2);
-            if (distanceMeters > 2000000 && targetZoom < 4) {
-                targetZoom = 4;
-            }
+            const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (20 + Math.random() * 24);
+            const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (16 + Math.random() * 22);
 
-            const baseOffsetX = (Math.random() < 0.5 ? -1 : 1) * (22 + Math.random() * 26);
-            const baseOffsetY = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
-
-            const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, startZoom);
+            const panOffset = getPixelToLatLngOffset(baseOffsetX, baseOffsetY, targetLat, currentZoom);
             const panTargetLat = targetLat + panOffset.dLat;
             const panTargetLng = targetLng + panOffset.dLng;
 
@@ -695,12 +829,12 @@
             const dLng = getShortestLngDiff(panTargetLng, startLng);
 
             const panDuration = distanceMeters < 50000
-                ? 380 + Math.floor(Math.random() * 80)
-                : Math.min(1250, Math.max(700, 650 + Math.log10(distanceMeters + 1) * 85));
+                ? 340 + Math.floor(Math.random() * 70)
+                : Math.min(950, Math.max(550, 500 + Math.log10(distanceMeters + 1) * 65));
 
             const startTime = performance.now();
 
-            const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.025 + Math.random() * 0.035);
+            const arcMultiplier = (Math.random() < 0.5 ? -1 : 1) * (0.02 + Math.random() * 0.03);
             const perpLat = -dLng * arcMultiplier;
             const perpLng = dLat * arcMultiplier;
 
@@ -731,7 +865,7 @@
                         }
                         currentPanAnimId = null;
 
-                        const humanViewPause = 350 + Math.floor(Math.random() * 100);
+                        const humanViewPause = 320 + Math.floor(Math.random() * 90);
                         currentZoomTimerId = setTimeout(() => {
                             stepZoomPerlahan(map, targetLat, targetLng, targetZoom, baseOffsetX, baseOffsetY);
                         }, humanViewPause);
@@ -757,8 +891,8 @@
             const currentZ = map.getZoom();
             if (currentZ < targetZoom) {
                 const nextZ = currentZ + 1;
-                const currentOffsetX = offsetX + (Math.random() - 0.5) * 12;
-                const currentOffsetY = offsetY + (Math.random() - 0.5) * 12;
+                const currentOffsetX = offsetX + (Math.random() - 0.5) * 10;
+                const currentOffsetY = offsetY + (Math.random() - 0.5) * 10;
                 const zoomOffset = getPixelToLatLngOffset(currentOffsetX, currentOffsetY, targetLat, nextZ);
 
                 map.setZoom(nextZ);
@@ -766,7 +900,11 @@
                     map.setCenter(new google.maps.LatLng(targetLat + zoomOffset.dLat, targetLng + zoomOffset.dLng));
                 }
 
-                const scrollDelay = 340 + Math.floor(Math.random() * 90);
+                const zoomRemaining = targetZoom - nextZ;
+                const scrollDelay = zoomRemaining > 2
+                    ? 190 + Math.floor(Math.random() * 60)
+                    : 310 + Math.floor(Math.random() * 80);
+
                 currentZoomTimerId = setTimeout(() => {
                     stepZoomPerlahan(map, targetLat, targetLng, targetZoom, currentOffsetX, currentOffsetY);
                 }, scrollDelay);

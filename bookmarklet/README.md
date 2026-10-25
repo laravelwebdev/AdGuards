@@ -50,4 +50,4 @@ Seluruh kode tertanam langsung di URL bookmarklet. Tidak memerlukan koneksi ke G
      - **Shortcut `G`**: Menampilkan titik koordinat target (menimpa default browser/game). Tahan untuk melihat titik (gaya keyboard PC), atau ketuk cepat untuk toggle nyala/mati (gaya keyboard Android).
    - **PC Desktop (Mouse)**:
      - **Tahan Klik Kanan**: Menampilkan titik pin biru tepat di lokasi target koordinat ronde. Lepas untuk menghilangkan.
-     - **Klik Tengah Mouse**: Melakukan *human-like pan & gradual zoom* ke target lokasi.
+     - **Klik Tengah Mouse**: Melakukan *smart human-like pan & gradual zoom* ke target lokasi (jika titik berada di luar canvas map bounds, peta akan *zoom out* bertahap sampai titik masuk bound, baru bergeser dan *zoom in* kembali secara natural).
